@@ -90,6 +90,7 @@ class GifPicker(QDialog):
         kr.setContentsMargins(0, 0, 0, 0)
         self.key = QLineEdit(self.s.giphy_key)
         self.key.setPlaceholderText("Paste your free GIPHY API key")
+        self.key.setEchoMode(QLineEdit.EchoMode.Password)
         get_key = QPushButton("Get a free key ↗")
         get_key.setToolTip("Sign in at GIPHY → Create an App → API → copy the key. Takes 2 minutes.")
         get_key.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(GIPHY_SIGNUP)))

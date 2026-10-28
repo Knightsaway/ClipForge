@@ -724,7 +724,7 @@ class CaptureEngine:
             try:
                 cmd, series = self._build_cmd()
             except FileNotFoundError as e:
-                self.state.error = "FFmpeg is missing — run setup.bat again"
+                self.state.error = "FFmpeg is missing — reinstall the win64 release (ffmpeg\\bin) or run setup.bat"
                 self._log(str(e))
                 self.emit("state", self.state)
                 return
@@ -1270,10 +1270,16 @@ def restart_as_admin() -> bool:
     import ctypes
     import os
     import sys
+
+    from .paths import app_root, is_frozen
+
     exe = sys.executable
-    if exe.lower().endswith("python.exe"):
-        exe = exe[:-10] + "pythonw.exe"
-    args = f'-m clipforge --after {os.getpid()}'
-    root = str(Path(__file__).resolve().parent.parent)
+    root = str(app_root())
+    if is_frozen():
+        args = f"--after {os.getpid()}"
+    else:
+        if exe.lower().endswith("python.exe"):
+            exe = exe[:-10] + "pythonw.exe"
+        args = f"-m clipforge --after {os.getpid()}"
     r = ctypes.windll.shell32.ShellExecuteW(None, "runas", exe, args, root, 0)
     return r > 32   # > 32 = started; the user may also have said No

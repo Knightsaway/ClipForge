@@ -1,0 +1,109 @@
+name: Release (manual tag)
+
+# Manual / emergency path when you push a v* tag yourself.
+# Normal releases go through release-please.yml on main (which builds + uploads assets).
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and upload (e.g. v5.2.2)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  version-check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - id: ver
+        name: Assert tag matches __version__
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          TAG_STRIP="${TAG#v}"
+          VER=$(python -c "import pathlib; t=pathlib.Path('clipforge/__init__.py').read_text();
+print(next(l.split('=',1)[1].strip().split()[0].strip().strip(chr(34).chr(39)) for l in t.splitlines() if l.startswith('__version__')))")
+          echo "tag=$TAG version=$VER"
+          test "$TAG_STRIP" = "$VER"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+  windows-bundle:
+    needs: version-check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version-check.outputs.tag }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Build onedir + vendor FFmpeg
+        shell: pwsh
+        run: ./scripts/build_windows.ps1
+
+      - name: Zip win64 artifact
+        shell: pwsh
+        run: |
+          $ver = "${{ needs.version-check.outputs.version }}"
+          $name = "ClipForge-$ver-win64"
+          New-Item -ItemType Directory -Force "dist_release\$name" | Out-Null
+          Copy-Item -Recurse "dist\ClipForge\*" "dist_release\$name\"
+          Compress-Archive -Path "dist_release\$name" -DestinationPath "dist_release\$name.zip" -Force
+          Get-FileHash -Algorithm SHA256 "dist_release\$name.zip" |
+            ForEach-Object { "$($_.Hash.ToLower())  $name.zip" } |
+            Set-Content -Encoding ascii "dist_release\SHA256SUMS"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: win64-bundle
+          path: |
+            dist_release/*.zip
+            dist_release/SHA256SUMS
+
+  publish:
+    needs: [version-check, windows-bundle]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: win64-bundle
+          path: dist_release
+
+      - name: Ensure release exists, then upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ needs.version-check.outputs.tag }}"
+          VER="${{ needs.version-check.outputs.version }}"
+          if ! gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --repo "${{ github.repository }}" \
+              --title "ClipForge ${VER}" \
+              --notes "ClipForge ${VER} (manual tag build)."
+          fi
+          gh release upload "$TAG" \
+            --repo "${{ github.repository }}" \
+            dist_release/*.zip \
+            dist_release/SHA256SUMS \
+            --clobber

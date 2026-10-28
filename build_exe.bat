@@ -1,7 +1,7 @@
 @echo off
-rem Optional: bundle ClipForge into a standalone folder with ClipForge.exe (no Python needed to run it).
+rem Build the standalone Windows folder (ClipForge.exe + ffmpeg). Prefer CI Releases for users.
 cd /d "%~dp0"
-".venv\Scripts\python.exe" -m pip install pyinstaller
-".venv\Scripts\pyinstaller.exe" --noconfirm --windowed --name ClipForge --add-data "ffmpeg\bin;ffmpeg\bin" -p . clipforge\__main__.py
-echo Built: dist\ClipForge\ClipForge.exe
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\build_windows.ps1"
+echo.
+echo Output: dist\ClipForge\ClipForge.exe
 pause
