@@ -226,35 +226,85 @@ def _parse_sha256sums(text: str, asset_name: str) -> str:
     return ""
 
 
+def _zip_assets(assets: list) -> list:
+    return [a for a in assets if a.get("name", "").lower().endswith(".zip")
+            and "sha256" not in a.get("name", "").lower()]
+
+
+def _sums_asset(assets: list):
+    return next((a for a in assets if a.get("name", "").upper() in
+                 ("SHA256SUMS", "SHA256SUMS.TXT") or a.get("name", "").lower().endswith(".sha256")), None)
+
+
+def pick_release_asset(assets: list, *, frozen: bool | None = None) -> dict | None:
+    """Choose a release zip. Frozen installs require a *win64* asset (never source zipball)."""
+    if frozen is None:
+        frozen = is_frozen()
+    zips = _zip_assets(assets)
+    win64 = next((a for a in zips if "win64" in a.get("name", "").lower()), None)
+    if frozen:
+        if win64 is None:
+            raise ValueError("No ClipForge-*-win64.zip on this release — frozen installs cannot use source zips.")
+        return win64
+    return win64 if win64 is not None else (zips[0] if zips else None)
+
+
+def digest_from_sums_text(text: str, asset_name: str, sums_name: str) -> str:
+    """Parse a digest for asset_name; raise if the SUMS file cannot yield one."""
+    sha = _parse_sha256sums(text, asset_name)
+    if not sha and sums_name.lower().endswith(".sha256"):
+        sha = text.strip().split()[0].lower() if text.strip() else ""
+    if not sha or not re.fullmatch(r"[0-9a-f]{64}", sha.lower()):
+        raise ValueError(f"Could not find a SHA256 digest for {asset_name} in {sums_name}.")
+    return sha.lower()
+
+
+def require_asset_digest(assets: list, asset: dict, sums_text: str | None) -> str:
+    """Win64 (and any release that publishes SUMS) must verify; fail closed on missing/bad digests.
+
+    * If a SHA256SUMS / *.sha256 asset exists, its body must parse for this zip (sums_text required).
+    * Win64 bundles always require a digest (our release pipeline always uploads SHA256SUMS).
+    * Other zips with no SUMS asset may return '' (legacy / source-only releases).
+    """
+    sums = _sums_asset(assets)
+    name = asset.get("name", "")
+    is_win64 = "win64" in name.lower()
+    if sums is None:
+        if is_win64:
+            raise ValueError("win64 release is missing SHA256SUMS — refusing update.")
+        return ""
+    if sums_text is None:
+        raise ValueError(f"Failed to fetch {sums.get('name', 'SHA256SUMS')} — refusing update.")
+    return digest_from_sums_text(sums_text, name, sums.get("name", "SHA256SUMS"))
+
+
 def _from_github(repo: str) -> dict:
-    """The latest GitHub release: its tag is the version, its .zip asset (or the source zip) is the download."""
+    """The latest GitHub release: tag = version; prefer *win64* zip + SHA256SUMS."""
     req = urllib.request.Request(f"https://api.github.com/repos/{repo}/releases/latest",
                                  headers={"User-Agent": "ClipForge/" + __version__,
                                           "Accept": "application/vnd.github+json"})
     rel = json.loads(urllib.request.urlopen(req, timeout=10).read().decode("utf-8"))
     assets = rel.get("assets") or []
-    zips = [a for a in assets if a.get("name", "").lower().endswith(".zip")
-            and "sha256" not in a.get("name", "").lower()]
-    # Prefer the Windows onedir bundle when present.
-    asset = next((a for a in zips if "win64" in a.get("name", "").lower()), None)
-    if asset is None:
-        asset = zips[0] if zips else None
+    asset = pick_release_asset(assets)
     sha = ""
+    url = ""
     if asset:
-        sums = next((a for a in assets if a.get("name", "").upper() in
-                     ("SHA256SUMS", "SHA256SUMS.TXT") or a.get("name", "").lower().endswith(".sha256")), None)
-        if sums:
+        url = asset["browser_download_url"]
+        sums = _sums_asset(assets)
+        sums_text = None
+        if sums is not None:
             try:
                 sreq = urllib.request.Request(sums["browser_download_url"],
                                               headers={"User-Agent": "ClipForge/" + __version__})
-                text = urllib.request.urlopen(sreq, timeout=10).read().decode("utf-8", "replace")
-                sha = _parse_sha256sums(text, asset["name"])
-                if not sha and sums["name"].lower().endswith(".sha256"):
-                    sha = text.strip().split()[0].lower()
-            except Exception:
-                sha = ""
+                sums_text = urllib.request.urlopen(sreq, timeout=10).read().decode("utf-8", "replace")
+            except Exception as e:
+                raise ValueError(f"Failed to fetch release digests: {e}") from e
+        sha = require_asset_digest(assets, asset, sums_text)
+    elif not is_frozen():
+        # Source checkout only: zipball fallback when the release has no zip assets yet.
+        url = rel.get("zipball_url", "")
     return {"version": str(rel.get("tag_name", "")).lstrip("v"),
-            "url": asset["browser_download_url"] if asset else rel.get("zipball_url", ""),
+            "url": url,
             "sha256": sha,
             "notes": rel.get("body", "")}
 
@@ -284,6 +334,8 @@ def check(url: str, *, allow_insecure: bool = False) -> dict | None:
             return d if d.get("version") and d.get("url") and newer(d["version"], __version__) else None
         try:
             d = _from_github(repo)
+        except ValueError:
+            raise  # digest / frozen-asset policy — surface to the UI
         except Exception:
             d = None
         if d and d.get("version") and d.get("url") and newer(d["version"], __version__):
@@ -294,6 +346,13 @@ def check(url: str, *, allow_insecure: bool = False) -> dict | None:
     data = json.loads(urllib.request.urlopen(req, timeout=10).read().decode("utf-8"))
     if data.get("version") and data.get("url") and newer(data["version"], __version__):
         require_https(data["url"], allow_insecure=allow_insecure)
+        # version.json: if a sha256 field is present it must be usable (fail closed).
+        if "sha256" in data and data.get("sha256"):
+            exp = str(data["sha256"]).strip().lower().removeprefix("sha256:")
+            if not re.fullmatch(r"[0-9a-f]{64}", exp):
+                raise ValueError("Invalid sha256 in version.json — refusing update.")
+        elif "sha256" in data and not data.get("sha256"):
+            raise ValueError("version.json lists sha256 but it is empty — refusing update.")
         return data
     return None
 

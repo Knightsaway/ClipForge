@@ -69,6 +69,40 @@ def save_secrets(values: dict[str, str]) -> None:
                 pass
 
 
+def redact_settings_file() -> bool:
+    """Clear SECRET_KEYS in settings.json on disk. Returns True if the file was rewritten."""
+    from .config import SETTINGS_FILE
+
+    if not SETTINGS_FILE.exists():
+        return False
+    try:
+        data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    if not isinstance(data, dict):
+        return False
+    changed = False
+    for k in SECRET_KEYS:
+        if data.get(k):
+            data[k] = ""
+            changed = True
+    if not changed:
+        return False
+    SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(SETTINGS_FILE.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp, SETTINGS_FILE)
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+    return True
+
+
 def apply_to_settings(s) -> None:
     """Overlay secret fields from the secure store onto a Settings instance."""
     sec = load_secrets()
@@ -79,10 +113,13 @@ def apply_to_settings(s) -> None:
             save_secrets(migrated)
             for k, v in migrated.items():
                 setattr(s, k, v)
+            redact_settings_file()
             return
     for k in SECRET_KEYS:
         if k in sec:
             setattr(s, k, sec[k])
+    # Older builds may still have plaintext keys on disk after secrets.bin exists.
+    redact_settings_file()
 
 
 def persist_from_settings(s) -> None:
