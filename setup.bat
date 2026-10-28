@@ -24,16 +24,24 @@ if not exist ".venv\Scripts\python.exe" (
 )
 echo [2/6] Installing packages (PySide6, numpy, soundcard)...
 ".venv\Scripts\python.exe" -m pip install --upgrade pip >nul
-".venv\Scripts\python.exe" -m pip install -r requirements.txt || goto :fail
+if exist "requirements.lock" (
+  ".venv\Scripts\python.exe" -m pip install -r requirements.lock || goto :fail
+) else (
+  ".venv\Scripts\python.exe" -m pip install -r requirements.txt || goto :fail
+)
 
-rem ---- 3. FFmpeg (BtbN build: has ddagrab + NVENC/AMF/QSV) ----------------
+rem ---- 3. FFmpeg (pinned BtbN win64-gpl 7.1 build: ddagrab + NVENC/AMF/QSV) -
 if exist "ffmpeg\bin\ffmpeg.exe" (
   echo [3/6] FFmpeg already present.
 ) else (
-  echo [3/6] Downloading FFmpeg...
+  echo [3/6] Downloading FFmpeg (pinned + SHA256 check)...
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$ProgressPreference='SilentlyContinue';" ^
-    "Invoke-WebRequest 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip' -OutFile ffmpeg.zip;" ^
+    "$url='https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2025-10-31-13-40/ffmpeg-n7.1.2-7-g24c44c34dc-win64-gpl-7.1.zip';" ^
+    "$expect='9a906986a93e0ebc534ba2d53bb046d86cc74886e1b2ca054469982367ff75a5';" ^
+    "Invoke-WebRequest $url -OutFile ffmpeg.zip;" ^
+    "$hash=(Get-FileHash -Algorithm SHA256 ffmpeg.zip).Hash.ToLower();" ^
+    "if($hash -ne $expect){ Write-Error \"FFmpeg SHA256 mismatch: $hash\"; exit 1 };" ^
     "Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_tmp -Force;" ^
     "Move-Item (Get-ChildItem ffmpeg_tmp -Directory | Select-Object -First 1).FullName ffmpeg;" ^
     "Remove-Item ffmpeg.zip; Remove-Item ffmpeg_tmp -Recurse -Force" || goto :fail

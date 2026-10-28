@@ -1,3 +1,4 @@
-PySide6>=6.7
-numpy>=1.26
-soundcard>=0.4.4
+# Core runtime (see also pyproject.toml). Prefer requirements.lock for reproducible installs.
+PySide6>=6.7,<7
+numpy>=1.26,<3
+soundcard>=0.4.4,<0.5

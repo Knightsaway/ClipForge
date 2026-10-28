@@ -9,8 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from .config import IS_WINDOWS
-
-ROOT = Path(__file__).resolve().parent.parent
+from .paths import app_root, resource_root
 
 # Windows: hide console windows of child processes
 CREATE_NO_WINDOW = 0x08000000
@@ -31,15 +30,26 @@ def popen_flags(priority: str = "normal") -> dict:
 
 @lru_cache(maxsize=None)
 def ffmpeg_bin(name: str = "ffmpeg") -> str:
+    """Locate ffmpeg/ffprobe: vendored next to the app, then PATH.
+
+    Vendored FFmpeg is a separate GPL program invoked via subprocess (not linked).
+    See THIRD_PARTY_NOTICES.md.
+    """
     exe = name + (".exe" if IS_WINDOWS else "")
-    for cand in (ROOT / "ffmpeg" / "bin" / exe, ROOT / "ffmpeg" / exe):
-        if cand.exists():
-            return str(cand)
+    roots = []
+    for r in (app_root(), resource_root()):
+        if r not in roots:
+            roots.append(r)
+    for root in roots:
+        for cand in (root / "ffmpeg" / "bin" / exe, root / "ffmpeg" / exe):
+            if cand.exists():
+                return str(cand)
     found = shutil.which(name)
     if found:
         return found
     raise FileNotFoundError(
-        f"{name} not found. Run setup.bat (it downloads FFmpeg into the ClipForge folder).")
+        f"{name} not found. Install a release build (includes ffmpeg\\bin) or run setup.bat / "
+        "put FFmpeg on PATH.")
 
 
 def run(args: list[str], priority: str = "low", timeout: float | None = None) -> subprocess.CompletedProcess:

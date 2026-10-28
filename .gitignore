@@ -5,15 +5,42 @@ __pycache__/
 venv/
 build/
 dist/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.ruff_cache/
 *.spec
+!ClipForge.spec
 
 # Downloaded by setup.bat (not ours to share)
 ffmpeg/
 bin/
 piper/
 
-# Your own stuff never belongs in the repo
+# Secrets / local app data that must never be committed
+.env
+.env.*
+!.env.example
+settings.json
+secrets.bin
+*.bin
+*token*
+credentials*.json
+service_account*.json
+client_secret*.json
+*.pem
+*.p12
+upload_queue.json
+pending.json
+
+# Media / logs
 *.mp4
 *.mkv
 *.log
-client_secret*.json
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+.DS_Store

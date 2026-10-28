@@ -440,23 +440,34 @@ class V4SettingsBox(QWidget):
 
         g = QGroupBox("📱 Approve from your phone")
         f = QFormLayout(g)
-        self.phone = QCheckBox("Phone approval page on my home Wi-Fi")
+        self.phone = QCheckBox("Enable phone approval page (opt-in)")
         self.phone.setChecked(s.phone_enabled)
+        self.phone_lan = QCheckBox("Reachable on my LAN (same Wi-Fi)")
+        self.phone_lan.setChecked(getattr(s, "phone_lan", False))
+        self.phone_lan.setToolTip("Off = this PC only (127.0.0.1). On = phones on your home Wi-Fi can open the link.")
         f.addRow(self.phone)
+        f.addRow(self.phone_lan)
         self.link = QLineEdit(phone_url())
         self.link.setReadOnly(True)
+        self.link.setEchoMode(QLineEdit.EchoMode.Password)
+        self.link.setToolTip("Secret link — copy it; don't share it publicly or paste into chat apps.")
         row = QHBoxLayout()
         copy = QPushButton("Copy link")
         copy.clicked.connect(self._copy)
+        show = QPushButton("Show")
+        show.setCheckable(True)
+        show.toggled.connect(lambda on: self.link.setEchoMode(
+            QLineEdit.EchoMode.Normal if on else QLineEdit.EchoMode.Password))
         new = QPushButton("New link")
         new.setToolTip("Makes the old link stop working (if you shared it by accident)")
         new.clicked.connect(self._new)
         row.addWidget(copy)
+        row.addWidget(show)
         row.addWidget(new)
         f.addRow("Link", self.link)
         f.addRow("", row)
-        f.addRow(_muted("Open the link on your phone (same Wi-Fi) and add it to your home screen. "
-                        "Windows asks once to allow ClipForge on private networks — allow it."))
+        f.addRow(_muted("Enable above, copy the link on this PC, open it on your phone (same Wi-Fi if LAN is on), "
+                        "and add it to your home screen. The link is a secret — don't put it in ntfy or chat."))
         v.addWidget(g)
 
         g = QGroupBox("Automatic content")
@@ -524,6 +535,7 @@ class V4SettingsBox(QWidget):
     def apply(self):
         s = self.s
         s.phone_enabled = self.phone.isChecked()
+        s.phone_lan = self.phone_lan.isChecked()
         s.today_shorts = self.today_n.value()
         s.recap_enabled = self.recap.isChecked()
         s.recap_min_minutes = self.recap_min.value()

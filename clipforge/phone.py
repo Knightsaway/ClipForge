@@ -1,9 +1,10 @@
-"""Phone approval page: a private web page on your home Wi-Fi.
+"""Phone approval page: a private web page (opt-in).
 
 Open the link (shown in Settings) on your phone, bookmark it, and from the couch you can watch the
 day's videos, tap ✔ to schedule them or ✖ to skip, and save TikTok versions straight to your phone
-to post from the TikTok app. Only devices with the secret link can use it, and it isn't reachable
-from outside your home network. Windows asks once whether to allow it on private networks — say yes.
+to post from the TikTok app. By default it listens on 127.0.0.1 only; enable "Reachable on my LAN"
+to bind all interfaces so a phone on the same Wi-Fi can connect (HTTP, not reachable from the
+internet unless your router forwards the port). Keep the secret link private.
 """
 from __future__ import annotations
 
@@ -11,14 +12,18 @@ import hmac
 import http.server
 import json
 import mimetypes
-import os
 import secrets
 import socket
 import threading
+import time
 import urllib.parse
 from pathlib import Path
 
 from .producer import Approvals
+
+# Simple auth throttle: after this many failures, sleep before responding.
+_AUTH_FAIL_WINDOW = 60.0
+_AUTH_FAIL_LIMIT = 20
 
 
 def lan_ip() -> str:
@@ -34,6 +39,16 @@ def lan_ip() -> str:
 
 def new_token() -> str:
     return secrets.token_urlsafe(18)
+
+
+def _token_ok(provided: str, expected: str) -> bool:
+    """Constant-time compare; never raises on length mismatch."""
+    a, b = provided.encode("utf-8"), expected.encode("utf-8")
+    if len(a) != len(b):
+        # Still do a dummy compare so timing doesn't leak length alone via early return path cost.
+        hmac.compare_digest(a if a else b"x", a if a else b"x")
+        return False
+    return hmac.compare_digest(a, b)
 
 
 PAGE = r"""<!doctype html><html><head><meta charset="utf-8">
@@ -92,19 +107,37 @@ load();setInterval(load,60000);
 
 
 class PhoneServer:
-    def __init__(self, token: str, decide, port: int = 8765):
-        """decide(item_id, approve: bool) -> message (runs the same code as the PC buttons)."""
-        self.token, self.decide, self.port = token, decide, port
+    def __init__(self, token: str, decide, port: int = 8765, lan: bool = False):
+        """decide(item_id, approve: bool) -> message (runs the same code as the PC buttons).
+
+        lan=False binds 127.0.0.1 (this PC only). lan=True binds 0.0.0.0 for same-Wi-Fi phones.
+        """
+        self.token, self.decide, self.port, self.lan = token, decide, port, lan
         self.httpd: http.server.ThreadingHTTPServer | None = None
+        self._fail_times: list[float] = []
+        self._fail_lock = threading.Lock()
+
+    @property
+    def host(self) -> str:
+        return lan_ip() if self.lan else "127.0.0.1"
 
     @property
     def url(self) -> str:
-        return f"http://{lan_ip()}:{self.port}/?k={self.token}"
+        return f"http://{self.host}:{self.port}/?k={self.token}"
+
+    def _note_auth_fail(self):
+        now = time.monotonic()
+        with self._fail_lock:
+            self._fail_times = [t for t in self._fail_times if now - t < _AUTH_FAIL_WINDOW]
+            self._fail_times.append(now)
+            if len(self._fail_times) >= _AUTH_FAIL_LIMIT:
+                time.sleep(1.0)
 
     def start(self):
         if self.httpd:
             return
         server = self
+        bind = "0.0.0.0" if self.lan else "127.0.0.1"
 
         class H(http.server.BaseHTTPRequestHandler):
             def log_message(self, *a):
@@ -112,7 +145,8 @@ class PhoneServer:
 
             def _auth(self, qs) -> bool:
                 k = qs.get("k", [""])[0]
-                if not hmac.compare_digest(k.encode(), server.token.encode()):
+                if not _token_ok(k, server.token):
+                    server._note_auth_fail()
                     self.send_response(403)
                     self.end_headers()
                     return False
@@ -226,7 +260,7 @@ class PhoneServer:
                     except (BrokenPipeError, ConnectionResetError):
                         pass
 
-        self.httpd = http.server.ThreadingHTTPServer(("0.0.0.0", self.port), H)
+        self.httpd = http.server.ThreadingHTTPServer((bind, self.port), H)
         self.httpd.daemon_threads = True
         threading.Thread(target=self.httpd.serve_forever, name="phone", daemon=True).start()
 

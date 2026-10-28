@@ -39,7 +39,7 @@ CHUNK = 8 * 1024 * 1024  # multiple of 256 KiB
 # ------------------------------------------------------------------ secure storage
 def _dpapi(data: bytes, encrypt: bool) -> bytes:
     if not IS_WINDOWS:
-        return data
+        raise OSError("YouTube tokens require Windows DPAPI; refusing plaintext storage.")
     import ctypes
     from ctypes import wintypes
 
@@ -62,6 +62,8 @@ def _save_token(tok: dict):
 
 
 def _load_token() -> dict | None:
+    if not IS_WINDOWS:
+        return None
     try:
         return json.loads(_dpapi(TOKEN_FILE.read_bytes(), False))
     except Exception:

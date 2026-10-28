@@ -6,6 +6,7 @@ and placed just after each big moment. The game sound ducks under the caster aut
 """
 from __future__ import annotations
 
+import os
 import random
 import shutil
 import subprocess
@@ -82,13 +83,14 @@ def _piper(text: str, out: Path, voice: str) -> bool:
 def _sapi(text: str, out: Path) -> bool:
     if not IS_WINDOWS:
         return False
-    safe = text.replace("'", "''")
+    # Path/text via env vars — never interpolate untrusted strings into -Command.
     ps = ("Add-Type -AssemblyName System.Speech;"
           "$s=New-Object System.Speech.Synthesis.SpeechSynthesizer;$s.Rate=2;"
-          f"$s.SetOutputToWaveFile('{out}');$s.Speak('{safe}');$s.Dispose()")
+          "$s.SetOutputToWaveFile($env:CLIPFORGE_SAPI_OUT);$s.Speak($env:CLIPFORGE_SAPI_TEXT);$s.Dispose()")
+    env = {**os.environ, "CLIPFORGE_SAPI_OUT": str(out), "CLIPFORGE_SAPI_TEXT": text}
     try:
         r = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, timeout=60,
-                           **ff.popen_flags("low"))
+                           env=env, **ff.popen_flags("low"))
         return r.returncode == 0 and out.exists()
     except Exception:
         return False

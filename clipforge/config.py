@@ -132,7 +132,8 @@ class Settings:
     recap_min_minutes: int = 20
     monthly_enabled: bool = True       # 8+ min best of the month with chapters (waits for approval)
     series_parts: int = 3
-    phone_enabled: bool = True
+    phone_enabled: bool = False        # opt-in: local HTTP page for couch approvals
+    phone_lan: bool = False            # False = 127.0.0.1 only; True = LAN (0.0.0.0)
     phone_port: int = 8765
     phone_token: str = ""
     watermark_text: str = ""          # your @handle shown on exports
@@ -167,6 +168,10 @@ def load_settings() -> Settings:
     try:
         data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
     except Exception:
+        data = None
+    if data is None:
+        from . import secrets_store
+        secrets_store.apply_to_settings(s)
         return s
     hk = data.pop("hotkeys", None)
     for k, v in data.items():
@@ -185,11 +190,15 @@ def load_settings() -> Settings:
         for k, v in hk.items():
             if hasattr(s.hotkeys, k):
                 setattr(s.hotkeys, k, v)
+    from . import secrets_store
+    secrets_store.apply_to_settings(s)
     return s
 
 
 def save_settings(s: Settings) -> None:
-    data = asdict(s)
+    from . import secrets_store
+    secrets_store.persist_from_settings(s)
+    data = secrets_store.redact_for_json(asdict(s))
     fd, tmp = tempfile.mkstemp(dir=str(SETTINGS_FILE.parent), suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:

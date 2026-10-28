@@ -1,0 +1,8 @@
+# Pinned for reproducible Windows installs (pip install -r requirements.lock).
+# Refresh with: pip install 'PySide6>=6.7,<7' 'numpy>=1.26,<3' 'soundcard>=0.4.4,<0.5' && pip freeze > requirements.lock
+PySide6==6.12.0
+PySide6_Addons==6.12.0
+PySide6_Essentials==6.12.0
+shiboken6==6.12.0
+numpy==2.5.4
+soundcard==0.4.6
