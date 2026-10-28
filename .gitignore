@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+build/
+dist/
+*.spec
+
+# Downloaded by setup.bat (not ours to share)
+ffmpeg/
+bin/
+piper/
+
+# Your own stuff never belongs in the repo
+*.mp4
+*.mkv
+*.log
+client_secret*.json
