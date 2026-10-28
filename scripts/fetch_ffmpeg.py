@@ -17,7 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Pinned BtbN release (win64-gpl 7.1) — keep in sync with setup.bat
+# Pinned BtbN release (win64-gpl 7.1) - keep in sync with setup.bat
 FFMPEG_URL = (
     "https://github.com/BtbN/FFmpeg-Builds/releases/download/"
     "autobuild-2025-10-31-13-40/ffmpeg-n7.1.2-7-g24c44c34dc-win64-gpl-7.1.zip"
@@ -64,7 +64,7 @@ def main() -> int:
             shutil.rmtree(dest)
         shutil.move(str(inner), str(dest))
         _ensure_license_stub(dest)
-        print(f"Installed FFmpeg → {dest}")
+        print(f"Installed FFmpeg -> {dest}")
         print(f"Source offer: {FFMPEG_SOURCE_OFFER}")
         return 0
     finally:
