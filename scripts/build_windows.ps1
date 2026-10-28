@@ -41,5 +41,14 @@ if (Test-Path licenses) {
   Copy-Item -Recurse licenses "$out\licenses"
 }
 
-# Desktop shortcut helper (optional; users can pin the exe)
-Write-Host "Built: $out\ClipForge.exe (version $ver)"
+Write-Host "==> Self-test (window, video playback, bundled FFmpeg)"
+$report = Join-Path $env:TEMP "clipforge-selftest.txt"
+Remove-Item $report -ErrorAction SilentlyContinue
+$p = Start-Process -FilePath "$out\ClipForge.exe" -ArgumentList "--selftest", "`"$report`"" -PassThru
+$null = $p.Handle   # keeps ExitCode readable after the process ends
+if (-not $p.WaitForExit(180000)) { $p.Kill(); Write-Error "Self-test timed out"; exit 1 }
+if (Test-Path $report) { Get-Content $report; if ($env:GITHUB_ACTIONS) { "::notice title=Self-test::" + ((Get-Content $report | Where-Object { $_ -match '^(ok|FAIL|PASS)' }) -join ' | ') } }
+if ($p.ExitCode -ne 0) { Write-Error "Self-test failed (exit $($p.ExitCode))"; exit 1 }
+
+$mb = [math]::Round(((Get-ChildItem $out -Recurse -File | Measure-Object Length -Sum).Sum) / 1MB)
+Write-Host "Built: $out\ClipForge.exe (version $ver, $mb MB unpacked)"

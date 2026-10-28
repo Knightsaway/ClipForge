@@ -9,6 +9,7 @@ on:
       - "scripts/**"
       - "ClipForge.spec"
       - "requirements.lock"
+      - "clipforge/selftest.py"
       - ".github/workflows/**"
   workflow_dispatch:
 
@@ -34,3 +35,7 @@ jobs:
             if (-not (Test-Path "dist\ClipForge\$f")) { Write-Error "missing $f"; exit 1 }
           }
           Get-Content dist\ClipForge\VERSION
+          Compress-Archive -Path dist\ClipForge -DestinationPath check.zip -Force
+          $zip = (Get-Item check.zip).Length / 1MB
+          $dir = ((Get-ChildItem dist\ClipForge -Recurse -File | Measure-Object Length -Sum).Sum) / 1MB
+          "::notice title=Size::Release zip {0:N0} MB, unpacked {1:N0} MB" -f $zip, $dir

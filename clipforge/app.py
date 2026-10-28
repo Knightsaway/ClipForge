@@ -5,6 +5,7 @@ import faulthandler
 import sys
 import traceback
 from datetime import datetime
+from pathlib import Path
 
 from .config import IS_WINDOWS, app_data_dir, load_settings
 
@@ -19,6 +20,11 @@ def _log_exception(exc_type, exc, tb):
 
 
 def main():
+    if "--selftest" in sys.argv:          # CI: does this build have everything it needs?
+        from . import selftest
+        i = sys.argv.index("--selftest")
+        out = sys.argv[i + 1] if len(sys.argv) > i + 1 else str(app_data_dir() / "selftest.txt")
+        sys.exit(selftest.run(Path(out)))
     sys.excepthook = _log_exception
     try:
         faulthandler.enable(open(app_data_dir() / "crash.log", "a"))
