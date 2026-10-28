@@ -45,7 +45,9 @@ if licenses.is_dir():
     datas.append((str(licenses), "licenses"))
 
 a = Analysis(
-    [str(ROOT / "clipforge" / "__main__.py")],
+    # Must be a top-level script with absolute imports. Freezing clipforge/__main__.py
+    # as Analysis entry makes `from .app import main` fail (no parent package).
+    [str(ROOT / "run_clipforge.py")],
     pathex=[str(ROOT)],
     binaries=binaries,
     datas=datas,
