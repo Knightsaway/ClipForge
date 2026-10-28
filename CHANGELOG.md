@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/Knightsaway/ClipForge/compare/v0.2.1...v0.2.2) (2026-10-28)
+
+
+### Performance Improvements
+
+* **packaging:** slim the win64 bundle (424 → 115 MB) and self-test it ([#6](https://github.com/Knightsaway/ClipForge/issues/6)) ([83f737f](https://github.com/Knightsaway/ClipForge/commit/83f737f2442154e5822f03ded1b7780b0a29a723))
+
 ## [0.2.1](https://github.com/Knightsaway/ClipForge/compare/v0.2.0...v0.2.1) (2026-10-28)
 
 
