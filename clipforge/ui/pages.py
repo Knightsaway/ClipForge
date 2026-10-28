@@ -3097,10 +3097,11 @@ class SettingsPage(QWidget):
         import sys
         import winreg
         from ..capture import is_admin
+        from ..paths import app_root, is_frozen
         exe = sys.executable
-        if exe.lower().endswith("python.exe"):
+        root = app_root()
+        if not is_frozen() and exe.lower().endswith("python.exe"):
             exe = exe[:-10] + "pythonw.exe"
-        root = Path(__file__).resolve().parents[2]
         nowin = 0x08000000
         # remove both kinds first, then add the right one
         subprocess.run(["schtasks", "/Delete", "/TN", "ClipForge", "/F"], capture_output=True, creationflags=nowin)
@@ -3111,15 +3112,18 @@ class SettingsPage(QWidget):
                 pass
             if not on:
                 return
-            launcher = root / "ClipForge.vbs"
-            if is_admin() and launcher.exists():
-                # a logon task "with highest privileges" starts elevated without a UAC prompt -> GPU priority
-                cmd = f'wscript.exe "{launcher}" --minimized'
+            if is_frozen():
+                cmd = f'"{exe}" --minimized'
+            else:
+                launcher = root / "ClipForge.vbs"
+                cmd = (f'wscript.exe "{launcher}" --minimized' if launcher.exists()
+                       else f'"{exe}" -m clipforge --minimized')
+            if is_admin():
+                # Logon task with highest privileges → elevated without a UAC prompt → GPU priority
                 r = subprocess.run(["schtasks", "/Create", "/TN", "ClipForge", "/SC", "ONLOGON", "/RL", "HIGHEST",
                                     "/TR", cmd, "/F"], capture_output=True, creationflags=nowin)
                 if r.returncode == 0:
                     return
-            cmd = f'wscript.exe "{launcher}" --minimized' if launcher.exists() else f'"{exe}" -m clipforge --minimized'
             winreg.SetValueEx(k, "ClipForge", 0, winreg.REG_SZ, cmd)
 
     TABS = [("🎥  Recording", ["Capture", "Audio & webcam", "Hotkeys", "Highlights & auto", "Library",

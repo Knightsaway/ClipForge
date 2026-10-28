@@ -72,11 +72,12 @@ class MaintenanceBox(QWidget):
         f.addRow(QLabel(f"You have ClipForge {__version__}."))
         z = QPushButton("⬆ Install update from a zip…")
         z.setToolTip("Pick the ClipForge zip you were sent — or just drop it on the ClipForge window.\n"
-                     "Your clips, settings, drafts and installed packages stay as they are.")
+                     "Your clips, settings and drafts stay; Python packages are synced from requirements.txt.")
         z.clicked.connect(self.install_zip_dialog)
         f.addRow(z)
         self.update_url = QLineEdit(s.update_url)
-        self.update_url.setPlaceholderText("github:Knightsaway/ClipForge")
+        self.update_url.setPlaceholderText("github:Knightsaway/ClipForge  (or …@main for bleeding edge)")
+        self.update_url.setToolTip("Uses GitHub Releases by default. Append @main to follow the branch instead.")
         f.addRow("Check online", self.update_url)
         crow = QHBoxLayout()
         chk = QPushButton("Check now")
@@ -121,6 +122,8 @@ class MaintenanceBox(QWidget):
         trow = QHBoxLayout()
         self.topic = QLineEdit(s.ntfy_topic)
         self.topic.setPlaceholderText("off")
+        self.topic.setEchoMode(QLineEdit.EchoMode.Password)
+        self.topic.setToolTip("Topic name is a secret — anyone who knows it can read your pings.")
         gen = QPushButton("New topic")
         gen.clicked.connect(self._new_topic)
         test = QPushButton("Send test")
@@ -336,7 +339,7 @@ class MaintenanceBox(QWidget):
                     self.bridge.text.emit(self.upd_lbl, f"✔ You're up to date ({__version__}).")
                     return
                 self.bridge.text.emit(self.upd_lbl, f"Downloading {info['version']}…")
-                path = updater.download(info["url"])
+                path = updater.download(info["url"], expected_sha256=info.get("sha256") or "")
                 self._pending_zip = str(path)
                 self.bridge.text.emit(self.upd_lbl, f"⬆ {info['version']} downloaded")
                 self.bridge.downloaded.emit(str(path))
@@ -387,8 +390,8 @@ class MaintenanceBox(QWidget):
             t = self.topic.text().strip()
         self.s.ntfy_topic = t
         save_settings(self.s)
-        ok = send(t, "ClipForge", "It works! You'll get a ping when your Shorts are ready. 🎬",
-                  self.phone_url_fn())
+        # Do not attach the phone secret URL as Click — that would send the token to ntfy.sh.
+        ok = send(t, "ClipForge", "It works! You'll get a ping when your Shorts are ready. 🎬", "")
         QMessageBox.information(self, "Phone notifications",
                                 f"Sent to topic “{t}”. Subscribe to exactly that topic in the ntfy app." if ok else
                                 "Couldn't reach ntfy.sh — check your internet connection.")

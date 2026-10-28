@@ -6,22 +6,25 @@ YouTube Short / TikTok.
 
 ## Install (once)
 
-1. Unzip this folder somewhere permanent, e.g. `C:\ClipForge`.
-2. Double-click **`setup.bat`**. It installs Python if needed, the app's packages and FFmpeg,
-   asks whether you want auto-captions, and puts a **ClipForge** shortcut on your desktop.
-3. **Quit SteelSeries GG Moments** (and turn off Instant Replay in the NVIDIA app) — they grab the
+1. Download **`ClipForge-*-win64.zip`** from
+   [Releases](https://github.com/Knightsaway/ClipForge/releases) (not a source checkout).
+2. Unzip somewhere permanent, e.g. `C:\ClipForge`.
+3. Run **`ClipForge.exe`**. FFmpeg is already vendored under `ffmpeg\bin\` (GPL — see
+   `THIRD_PARTY_NOTICES.md` inside the zip).
+4. **Quit SteelSeries GG Moments** (and turn off Instant Replay in the NVIDIA app) — they grab the
    same hotkeys and the same GPU encoder.
-4. Start ClipForge from the desktop shortcut.
 
-If something doesn't start, run `run_debug.bat` to see the error. Logs live in
-`%APPDATA%\ClipForge\`.
+Optional captions / AI caster / Ollama are separate add-ons (Settings or a source `setup.bat` for
+devs). Logs live in `%APPDATA%\ClipForge\`.
 
 ## Updating
 
-Quit ClipForge (tray icon → Quit), then unzip the new version **over the same folder** so the hidden
-`.venv` folder that setup made stays put. If you ever unzip into a fresh folder, just run `setup.bat` there
-once — the launcher also offers to do that for you. Clips and settings live in Videos and AppData, so
-they're never lost.
+**In-app (recommended):** Settings → Upkeep → **Check now**. ClipForge downloads the newest **GitHub Release**
+zip, checks its SHA256 when published, overlays the new files, syncs Python packages, and restarts.
+Your clips, settings, drafts and `.venv` stay put.
+
+**Manual zip:** Quit ClipForge (tray icon → Quit), then unzip the new **win64** release **over the same
+folder**. Clips and settings live in Videos and AppData, so they're never lost.
 
 ## While playing
 
@@ -122,13 +125,21 @@ memory use stays flat however long the edit is.
   for every new text.
 - **Smooth slow-mo**: slow-mo now eases in and out. Right-click a slow-mo on the timeline to snap instead.
 - **Updates from GitHub**: put `github:yourname/ClipForge` in Settings → Upkeep → Check online; ClipForge finds
-  the newest release, downloads it and installs it.
+  the newest **Release**, downloads it, verifies SHA256 when available, and installs it. Append `@main` only if
+  you want bleeding-edge branch builds (no digest).
 
-### Updates come from GitHub
+### Updates come from GitHub Releases
 ClipForge checks https://github.com/Knightsaway/ClipForge when it starts (Settings → Upkeep → Check online,
-`github:Knightsaway/ClipForge` by default). Whatever version is on the `main` branch — or in a newer Release, if
-there is one — is offered with one click. To publish an update, push it to `main` with a higher version in
-`clipforge/__init__.py`.
+`github:Knightsaway/ClipForge` by default) and offers the latest **GitHub Release** with a higher version
+(prefers the `*-win64.zip` asset).
+To publish: merge conventional commits to `main`; **release-please** opens a Release PR, and merging it
+cuts tag `vX.Y.Z` and uploads `ClipForge-X.Y.Z-win64.zip` + `SHA256SUMS`. See [AGENTS.md](AGENTS.md).
+
+### Phone approvals & ntfy (trust model)
+- **Phone page** is **off by default**. Enable it in Settings; leave “Reachable on my LAN” off unless a phone on
+  your Wi-Fi needs it (HTTP on your LAN — not for hostile networks). The link contains a secret token: don’t
+  share it in chat or ntfy.
+- **ntfy** topics are capability secrets — anyone who knows the topic can read your pings. Keep the topic private.
 
 ## v2 features
 
@@ -302,3 +313,46 @@ Vertical layouts: **gameplay + blurred background** (default), **full-screen cen
 - **Audio sync offset**: if sound is slightly early or late versus the picture, nudge it.
 - **Auto-clip hype moments**: listens for shouting/laughing on the mic and big audio spikes, and
   drops a marker automatically.
+
+## For developers
+
+ClipForge is Windows-first (capture APIs, DPAPI). End users should use the **win64 Release** zip;
+`setup.bat` / `.vbs` remain for source checkouts only.
+
+```bat
+git clone https://github.com/Knightsaway/ClipForge.git
+cd ClipForge
+py -3.12 -m venv .venv
+.venv\Scripts\pip install -r requirements.lock
+.venv\Scripts\pip install -e ".[dev]"
+.venv\Scripts\python scripts\fetch_ffmpeg.py
+.venv\Scripts\python -m clipforge
+```
+
+Local standalone build (same as CI):
+
+```bat
+powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1
+rem → dist\ClipForge\ClipForge.exe
+```
+
+Tests and lint (also run in GitHub Actions on every PR):
+
+```bat
+.venv\Scripts\pytest -q
+.venv\Scripts\ruff check clipforge tests
+```
+
+Release: use **conventional commits** on `main`; merge the release-please PR (see [AGENTS.md](AGENTS.md)).
+That builds `ClipForge-X.Y.Z-win64.zip` (PyInstaller onedir + vendored GPL FFmpeg) and `SHA256SUMS`.
+Keep `THIRD_PARTY_NOTICES.md` / `licenses/` with redistributions.
+
+### Licensing (release builds)
+
+| Piece | License | Notes |
+|-------|---------|--------|
+| ClipForge code | MIT | [LICENSE](LICENSE) |
+| Vendored FFmpeg (BtbN win64-**gpl**) | GPL | Separate `ffmpeg.exe` process; source offer in notices |
+| PySide6 / Qt | LGPL | Bundled under `_internal/` |
+
+Do not strip `THIRD_PARTY_NOTICES.md` or `licenses/ffmpeg/` from redistributed zips.

@@ -718,11 +718,11 @@ class MainWindow(QMainWindow):
 
         ai_on, model = self.s.ai_enabled, self.s.ai_model
         items = self.upload_queue.items if self.s.learn else []
-        from .. import used
+        from .. import used as used_mod
         no_repeats = self.s.no_repeats
 
         def job(progress):
-            excl = used.exclusions() if no_repeats else []
+            excl = used_mod.exclusions() if no_repeats else []
             plan = plan_short(clips, target=target, before=before, after=after, progress=progress, exclude=excl,
                               auto_fx=self.s.auto_fx)
             post = None
@@ -731,8 +731,8 @@ class MainWindow(QMainWindow):
                     from .. import ai
                     if ai.available():
                         progress(0.95, "🤖 Writing the hook and title…")
-                        used = {p.path for p in plan}
-                        post = ai.write_post(clips[0].game, ai.clip_context([c for c in clips if c.path in used]),
+                        used_paths = {p.path for p in plan}
+                        post = ai.write_post(clips[0].game, ai.clip_context([c for c in clips if c.path in used_paths]),
                                              True, model, analytics.winning_hooks(items))
                 except Exception as e:
                     print("ai:", e)
@@ -778,7 +778,8 @@ class MainWindow(QMainWindow):
             self.exports.changed.emit()
             return msg
         try:
-            self.phone = PhoneServer(self.s.phone_token, decide, self.s.phone_port)
+            lan = bool(getattr(self.s, "phone_lan", False))
+            self.phone = PhoneServer(self.s.phone_token, decide, self.s.phone_port, lan=lan)
             self.phone.start()
         except OSError as e:
             print("phone page:", e)
@@ -979,8 +980,8 @@ class MainWindow(QMainWindow):
     def _push(self, title: str, msg: str):
         if self.s.ntfy_topic:
             from ..notify import send_async
-            url = self.settings_page.phone_url() if self.s.phone_enabled else ""
-            send_async(self.s.ntfy_topic, title, msg, url)
+            # Never put the phone secret link in ntfy Click — that would send the token to ntfy.sh.
+            send_async(self.s.ntfy_topic, title, msg, "")
 
     def _check_update_online(self):
         url = self.s.update_url
