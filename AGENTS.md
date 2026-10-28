@@ -1,6 +1,41 @@
 # AGENTS.md — working on ClipForge
 
-Guidance for humans and coding agents. Prefer this over older README install notes when they conflict.
+Single source of truth for humans and coding agents (Claude, Cursor, etc.). Prefer this over older README install notes when they conflict. `CLAUDE.md` is a pointer here.
+
+## Hard rules (non-negotiable)
+
+These exist because force-pushed `main` already orphaned feature branches.
+
+### Git — never rewrite shared history
+
+1. **Never** `git push --force` / `--force-with-lease` to `main` (or the default branch).
+2. **Never** amend, rebase, filter-repo, or change author/email on commits already on `origin/main`.
+3. **Never** create a new root commit or re-import the tree onto `main` to “clean history.”
+4. Before branch / rebase / PR work: `git fetch origin`. If local `main` ≠ `origin/main`, fast-forward: `git checkout main && git reset --hard origin/main`.
+5. Rebase feature work onto **current** `origin/main` (`git rebase --onto origin/main <old-base> <branch>` when needed). If there is **no merge-base**, stop and tell the human — do not invent a new history.
+6. Force-push is allowed **only** for the current feature branch after a requested rebase, and only with `--force-with-lease`. Never force-push someone else’s branch.
+7. Do not push tags or cut GitHub Releases unless the human explicitly asked.
+8. Do not skip hooks (`--no-verify`) unless the human explicitly asked.
+
+### Commits & versioning
+
+1. **Conventional Commits only** (`feat:`, `fix:`, `ci:`, …). release-please owns semver + `CHANGELOG.md`.
+2. Do **not** hand-edit `__version__`, `pyproject.toml` version, or `.release-please-manifest.json` for routine releases.
+3. Do not commit secrets, `.venv/`, `ffmpeg/`, `dist/`, or AppData files.
+
+### Security / product defaults (do not regress)
+
+1. Phone approval stays **opt-in**; LAN bind is a separate setting; default bind is localhost.
+2. Never put phone tokens or secret links into ntfy Click URLs.
+3. Secrets go through `secrets_store` (DPAPI); migrating must scrub plaintext `settings.json`.
+4. Updater: HTTPS only; win64 releases **fail closed** without a usable SHA256; frozen installs never take source zipballs.
+5. Keep zip-slip guards on update + backup restore.
+
+### Working style
+
+1. Prefer small, reviewable diffs. No drive-by refactors.
+2. Add/extend tests for updater, backup path safety, secrets migrate, phone auth helpers when touching them.
+3. When stuck on git history or release-please: explain and ask — do not “fix” by rewriting `main`.
 
 ## What ClipForge is
 
@@ -25,8 +60,6 @@ Version lives in:
 - `clipforge/__init__.py` → `__version__` (marked for release-please)
 - `pyproject.toml` → `[project].version` (bumped by release-please python strategy)
 - `.release-please-manifest.json` → last released version
-
-Do **not** hand-bump versions for a normal release; use conventional commits + release-please.
 
 ## Conventional commits (required)
 
@@ -130,18 +163,9 @@ In-app updater prefers the `*win64*.zip` asset and checks SHA256 when present.
 ## Security / packaging rules of thumb
 
 - Phone approval is **opt-in**; LAN bind is a separate setting; HTTP only on trusted networks.
-- Updates: HTTPS only; verify SHA256 when the release publishes digests.
+- Updates: HTTPS only; win64 **fail closed** without a usable SHA256SUMS digest; frozen installs never take source zipballs.
 - FFmpeg is a **separate GPL binary** invoked via subprocess — see `THIRD_PARTY_NOTICES.md`.
-- Secrets (`giphy_key`, `phone_token`, `ntfy_topic`) go through `secrets_store` (DPAPI on Windows), not plaintext backups.
-
-## Git hygiene (non-negotiable)
-
-`main` has been force-rewritten before and orphaned feature branches. Agents must follow **CLAUDE.md**.
-
-- Never force-push `main`. Never rewrite commits already on `origin/main`.
-- Always `git fetch origin` before rebasing or opening a PR; fast-forward local `main` to `origin/main`.
-- Rebase feature work onto current `origin/main`. If there is no merge-base, stop and ask a human.
-- Force-push is only for the current feature branch after a requested rebase (`--force-with-lease`).
+- Secrets (`giphy_key`, `phone_token`, `ntfy_topic`) go through `secrets_store` (DPAPI on Windows), not plaintext backups; migrate must scrub `settings.json`.
 
 ## Agent checklist before finishing a change
 
