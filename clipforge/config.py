@@ -1,0 +1,201 @@
+"""Settings: one JSON file in %APPDATA%/ClipForge, written atomically so a crash can never corrupt it."""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import tempfile
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+APP_NAME = "ClipForge"
+
+
+def app_data_dir() -> Path:
+    base = os.environ.get("APPDATA") or str(Path.home() / ".config")
+    p = Path(base) / APP_NAME
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def default_library_dir() -> Path:
+    vids = Path.home() / "Videos"
+    if not vids.exists():
+        vids = Path.home()
+    return vids / APP_NAME
+
+
+@dataclass
+class Hotkeys:
+    save_clip: str = "PageUp"          # save the replay buffer (like your GG setup)
+    marker: str = "Home"               # drop a "that was good" marker while playing
+    toggle_record: str = "Ctrl+End"    # start/stop a full session recording
+    save_long: str = "Ctrl+PageUp"     # save the whole buffer, ignoring clip length
+
+
+@dataclass
+class Settings:
+    # --- capture -----------------------------------------------------------
+    library_dir: str = str(default_library_dir())
+    buffer_seconds: int = 180          # how much history is kept (3:00 like GG)
+    clip_seconds: int = 60             # length of a normal "save clip"
+    marker_pre: int = 12               # seconds before a marker used by auto-edit
+    marker_post: int = 4               # seconds after a marker used by auto-edit
+    quality: str = "High"              # Low / Medium / High / Ultra
+    resolution: str = "Native"         # Native / 1440p / 1080p / 720p
+    fps: int = 60
+    codec: str = "h264"                # h264 / hevc / av1
+    encoder: str = "auto"              # auto / nvenc / amf / qsv / x264
+    monitor: int = 0
+    follow_game: bool = True           # keep recording the game (not the desktop) when you alt-tab
+    capture_method: str = "auto"       # auto / window (Windows Graphics Capture) / desktop (Desktop Duplication) / gdi
+    method_by_game: dict = field(default_factory=dict)   # what turned out smooth for each game
+    capture_cursor: bool = False
+    desktop_audio: bool = True
+    mic_audio: bool = False
+    mic_device: str = ""               # empty = default microphone
+    audio_offset_ms: int = 0
+    webcam: str = ""                   # DirectShow camera name; empty = no facecam
+    webcam_res: str = "1280x720"
+    webcam_fps: int = 30
+    only_while_gaming: bool = True     # pause the buffer when no fullscreen game is focused
+    start_buffer_on_launch: bool = True
+    start_minimized: bool = False
+    auto_clip: bool = False            # auto-save loud/hype moments (audio based)
+    sound_on_save: bool = True
+    game_aliases: dict = field(default_factory=dict)   # exe -> nice name
+    extra_folders: list = field(default_factory=list)  # e.g. old GG Moments / ShadowPlay folders
+    # --- export ------------------------------------------------------------
+    short_target_seconds: int = 30
+    short_layout: str = "blur"         # blur / crop / zoom / fit / facecam (webcam on top)
+    cam_layout: dict = field(default_factory=dict)   # webcam in exports: {"mode", "box_v", "box_h"}
+    gif_dir: str = ""                  # your GIFs / stickers (empty = AppData/ClipForge/gifs)
+    caster_game_volume: float = 0.7   # game level while the AI caster talks (full volume between lines)
+    giphy_key: str = ""
+    auto_gifs: bool = True             # Auto Short / Montage may put a few small GIF stickers on big moments
+    auto_review: bool = True           # Auto Short opens in the Studio for you to check before rendering
+    montage_auto_edit: bool = True     # Create Montage adds effects (+ GIFs) for you, ready to tweak
+    studio_advanced: bool = True       # Studio shows the full timeline (off = simple view)
+    caption_style: str = "pop3"        # pop3 / word / karaoke / boxed
+    styles: dict = field(default_factory=dict)          # "My style" presets: name -> look
+    style_by_game: dict = field(default_factory=dict)   # game -> style name
+    default_style: str = ""
+    session_inbox: bool = True         # after a session: the best Shorts wait as drafts in Drafts → Inbox
+    session_inbox_count: int = 3
+    no_repeats: bool = True            # automatic edits skip moments already used in a video
+    auto_cut_boring: bool = True       # Create Montage cuts dead air for you (undo brings it back)
+    auto_transitions: bool = True      # automatic edits put quick transitions between clips
+    auto_clean_days: int = 0           # delete unused clips older than this (0 = never)
+    disk_warn_gb: int = 20             # warn when the clips drive has less free space than this
+    update_url: str = ""               # where to look for new versions (a version.json), optional
+    ntfy_topic: str = ""               # phone push notifications via the free ntfy app
+    wizard_done: bool = False
+    game_overrides: dict = field(default_factory=dict)   # game -> {"fps", "quality", "buffer_seconds"}
+    music_dir: str = ""                # your royalty-free music folder (for styles / auto edits)
+    quick_trim: bool = True            # right after saving: Ctrl+→ / Ctrl+← move the clip's start by 5 s
+    weekly_summary: bool = True        # Sunday evening: your week in numbers (toast + phone ping)
+    summary_week: str = ""
+    text_templates: dict = field(default_factory=dict)   # name -> text look (style, size, place, length)
+    text_default: str = ""
+    skin: str = "legacy"               # legacy / halflife / control / lastjedi / eldenring
+    short_fps: int = 60
+    loudness_normalize: bool = True
+    music_file: str = ""
+    music_volume: float = 0.18
+    captions: bool = False             # needs faster-whisper (optional)
+    auto_fx: bool = True               # Auto Short adds zooms / slow-mo / sound effects on kills & markers
+    sfx_dir: str = ""                  # your own sound effects folder
+    # --- uploads -----------------------------------------------------------
+    yt_client_secret: str = ""         # path to Google OAuth client JSON
+    yt_privacy: str = "public"
+    post_times: list = field(default_factory=lambda: ["17:30"])  # daily slots for scheduled posts
+    # --- v3 -------------------------------------------------------------------
+    ai_enabled: bool = True            # use local AI (Ollama) for titles/hooks when it's running
+    ai_model: str = "llama3.1:8b"
+    learn: bool = True                 # lean towards what performs on your channel
+    bestof_enabled: bool = True
+    bestof_day: int = 6                # 0=Mon … 6=Sun
+    bestof_hour: int = 12
+    bestof_count: int = 10
+    bestof_autopost: bool = True       # schedule it on YouTube when connected
+    squad_dir: str = ""                # shared Drive/OneDrive/Dropbox folder for Friends' POV
+    squad_name: str = ""
+    ab_titles: bool = True             # A/B test titles on scheduled long videos (AI writes title B)
+    # --- v4 -------------------------------------------------------------------
+    loop_shorts: bool = True           # Shorts end by dissolving into their first frame (replays)
+    tiktok_versions: bool = True       # every Short also gets a TikTok version with its own hook
+    reaction_zoom: bool = True         # facecam punches in when you laugh / yell
+    caster_auto: bool = False          # put the AI caster voice on Auto Shorts
+    caster_voice: str = "en_US-ryan-high"
+    today_shorts: int = 3
+    recap_enabled: bool = True         # 60 s recap after each gaming session (waits for approval)
+    recap_min_minutes: int = 20
+    monthly_enabled: bool = True       # 8+ min best of the month with chapters (waits for approval)
+    series_parts: int = 3
+    phone_enabled: bool = True
+    phone_port: int = 8765
+    phone_token: str = ""
+    watermark_text: str = ""          # your @handle shown on exports
+    hotkeys: Hotkeys = field(default_factory=Hotkeys)
+
+    # quality -> (cq, maxrate Mbps) at 1080p60; scaled by resolution in capture.py
+    QUALITY_TABLE = {
+        "Low": (28, 15),
+        "Medium": (23, 30),
+        "High": (19, 50),
+        "Ultra": (16, 80),
+    }
+
+    @property
+    def library(self) -> Path:
+        p = Path(self.library_dir)
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
+    @property
+    def buffer_dir(self) -> Path:
+        p = app_data_dir() / "buffer"
+        p.mkdir(parents=True, exist_ok=True)
+        return p
+
+
+SETTINGS_FILE = app_data_dir() / "settings.json"
+
+
+def load_settings() -> Settings:
+    s = Settings()
+    try:
+        data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return s
+    hk = data.pop("hotkeys", None)
+    for k, v in data.items():
+        if hasattr(s, k) and k != "QUALITY_TABLE":
+            setattr(s, k, v)
+    if s.short_layout == "facecam_pip":       # older versions: now the movable webcam box
+        s.short_layout = "blur"
+    if not isinstance(s.cam_layout, dict):
+        s.cam_layout = {}
+    if s.short_layout == "facecam":          # older versions: "webcam on top" is now a webcam option
+        s.short_layout = "crop"
+        s.cam_layout.setdefault("mode", "stack")
+    if isinstance(hk, dict):
+        for k, v in hk.items():
+            if hasattr(s.hotkeys, k):
+                setattr(s.hotkeys, k, v)
+    return s
+
+
+def save_settings(s: Settings) -> None:
+    data = asdict(s)
+    fd, tmp = tempfile.mkstemp(dir=str(SETTINGS_FILE.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp, SETTINGS_FILE)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
+IS_WINDOWS = sys.platform == "win32"
