@@ -30,21 +30,22 @@ if exist "requirements.lock" (
   ".venv\Scripts\python.exe" -m pip install -r requirements.txt || goto :fail
 )
 
-rem ---- 3. FFmpeg (pinned BtbN win64-gpl 7.1 build: ddagrab + NVENC/AMF/QSV) -
+rem ---- 3. FFmpeg (pinned BtbN win64-gpl-shared 7.1 build: ddagrab + NVENC/AMF/QSV) -
 if exist "ffmpeg\bin\ffmpeg.exe" (
   echo [3/6] FFmpeg already present.
 ) else (
   echo [3/6] Downloading FFmpeg (pinned + SHA256 check)...
   powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$ProgressPreference='SilentlyContinue';" ^
-    "$url='https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2025-10-31-13-40/ffmpeg-n7.1.2-7-g24c44c34dc-win64-gpl-7.1.zip';" ^
-    "$expect='9a906986a93e0ebc534ba2d53bb046d86cc74886e1b2ca054469982367ff75a5';" ^
+    "$url='https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2025-10-31-13-40/ffmpeg-n7.1.2-7-g24c44c34dc-win64-gpl-shared-7.1.zip';" ^
+    "$expect='65df8e744fa3728ba9dd06d30c31079d9169ca578b6656f4ed208438a73d93dd';" ^
     "Invoke-WebRequest $url -OutFile ffmpeg.zip;" ^
     "$hash=(Get-FileHash -Algorithm SHA256 ffmpeg.zip).Hash.ToLower();" ^
     "if($hash -ne $expect){ Write-Error \"FFmpeg SHA256 mismatch: $hash\"; exit 1 };" ^
     "Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_tmp -Force;" ^
     "Move-Item (Get-ChildItem ffmpeg_tmp -Directory | Select-Object -First 1).FullName ffmpeg;" ^
-    "Remove-Item ffmpeg.zip; Remove-Item ffmpeg_tmp -Recurse -Force" || goto :fail
+    "Remove-Item ffmpeg.zip; Remove-Item ffmpeg_tmp -Recurse -Force;" ^
+    "Remove-Item ffmpeg\bin\ffplay.exe, ffmpeg\include, ffmpeg\lib, ffmpeg\doc -Recurse -Force -ErrorAction SilentlyContinue" || goto :fail
 )
 
 rem ---- 4. Optional: auto captions ------------------------------------------

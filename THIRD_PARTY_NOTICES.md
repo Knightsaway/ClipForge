@@ -6,13 +6,13 @@ Release builds also ship other components. Redistributors must keep this file an
 
 ## FFmpeg (GPL) — separate program
 
-Release folders include a **BtbN win64-gpl** build of [FFmpeg](https://ffmpeg.org/) under
-`ffmpeg/bin/` (`ffmpeg.exe`, `ffprobe.exe`).
+Release folders include a **BtbN win64-gpl-shared** build of [FFmpeg](https://ffmpeg.org/) under
+`ffmpeg/bin/` (`ffmpeg.exe`, `ffprobe.exe` and the FFmpeg DLLs they share).
 
 - **License:** GPL (this build links GPL libraries such as x264). See `licenses/ffmpeg/` and
   [FFmpeg legal](https://ffmpeg.org/legal.html).
 - **How ClipForge uses it:** only as an **external process** via command-line arguments
-  (`subprocess`). ClipForge does **not** link against libav\* / FFmpeg libraries.
+  (`subprocess`). ClipForge does **not** link against libav\* / FFmpeg libraries; only ffmpeg.exe / ffprobe.exe load them.
 - **Source offer:** corresponding sources are available from the pinned BtbN release used to
   fetch the binaries (see `scripts/fetch_ffmpeg.py` and `licenses/ffmpeg/README.txt`).
   Current pin:

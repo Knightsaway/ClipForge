@@ -17,12 +17,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# Pinned BtbN release (win64-gpl 7.1) - keep in sync with setup.bat
+# Pinned BtbN release (win64-gpl-shared 7.1) - keep in sync with setup.bat.
+# The shared build lets ffmpeg.exe and ffprobe.exe share one set of DLLs: ~150 MB instead of
+# ~410 MB for three static exes. ffplay, headers and docs are dropped (ClipForge never uses them).
 FFMPEG_URL = (
     "https://github.com/BtbN/FFmpeg-Builds/releases/download/"
-    "autobuild-2025-10-31-13-40/ffmpeg-n7.1.2-7-g24c44c34dc-win64-gpl-7.1.zip"
+    "autobuild-2025-10-31-13-40/ffmpeg-n7.1.2-7-g24c44c34dc-win64-gpl-shared-7.1.zip"
 )
-FFMPEG_SHA256 = "9a906986a93e0ebc534ba2d53bb046d86cc74886e1b2ca054469982367ff75a5"
+FFMPEG_SHA256 = "65df8e744fa3728ba9dd06d30c31079d9169ca578b6656f4ed208438a73d93dd"
 FFMPEG_SOURCE_OFFER = (
     "https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2025-10-31-13-40"
 )
@@ -63,12 +65,20 @@ def main() -> int:
         if dest.exists():
             shutil.rmtree(dest)
         shutil.move(str(inner), str(dest))
+        _slim(dest)
         _ensure_license_stub(dest)
         print(f"Installed FFmpeg -> {dest}")
         print(f"Source offer: {FFMPEG_SOURCE_OFFER}")
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _slim(ffmpeg_dir: Path) -> None:
+    """Drop what ClipForge never runs: ffplay, C headers, import libraries, HTML docs."""
+    (ffmpeg_dir / "bin" / "ffplay.exe").unlink(missing_ok=True)
+    for sub in ("include", "lib", "doc"):
+        shutil.rmtree(ffmpeg_dir / sub, ignore_errors=True)
 
 
 def _ensure_license_stub(ffmpeg_dir: Path) -> None:
@@ -85,7 +95,7 @@ def _ensure_license_stub(ffmpeg_dir: Path) -> None:
         encoding="utf-8",
     )
     # Copy any license files that shipped inside the build tree
-    for name in ("LICENSE", "LICENSE.md", "COPYING", "COPYING.GPLv3", "COPYING.LGPLv2.1", "COPYING.LGPLv3"):
+    for name in ("LICENSE", "LICENSE.txt", "LICENSE.md", "COPYING", "COPYING.GPLv3", "COPYING.LGPLv2.1", "COPYING.LGPLv3"):
         for found in ffmpeg_dir.rglob(name):
             if found.is_file():
                 shutil.copy2(found, lic_dir / found.name)
