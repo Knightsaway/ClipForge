@@ -71,7 +71,9 @@ def test_pick_release_asset_frozen_requires_win64():
     win = {"name": "ClipForge-9.9.9-win64.zip", "browser_download_url": "https://example.com/w.zip"}
     assets.append(win)
     assert updater.pick_release_asset(assets, frozen=True) is win
-    assert updater.pick_release_asset(assets, frozen=False) is win
+    # source installs never take the exe bundle (it wouldn't update the Python code they run)
+    assert updater.pick_release_asset(assets, frozen=False)["name"] == "source.zip"
+    assert updater.pick_release_asset([win], frozen=False) is None
 
 
 def test_pick_release_asset_source_fallback_when_not_frozen():
@@ -133,7 +135,8 @@ def test_install_rejects_zip_slip(tmp_path: Path):
     assert not (tmp_path / "outside.txt").exists()
 
 
-def test_frozen_zip_version_and_install(tmp_path: Path):
+def test_frozen_zip_version_and_install(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(updater, "is_frozen", lambda: True)
     zpath = tmp_path / "win64.zip"
     with zipfile.ZipFile(zpath, "w") as z:
         z.writestr("ClipForge-9.9.9-win64/VERSION", "9.9.9\n")
@@ -149,3 +152,27 @@ def test_frozen_zip_version_and_install(tmp_path: Path):
     assert (target / "ClipForge.exe").exists()
     assert (target / "ffmpeg" / "bin" / "ffmpeg.exe").exists()
     assert (target / "VERSION").read_text(encoding="utf-8").startswith("9.9.9")
+
+
+def _zip(path, files):
+    with zipfile.ZipFile(path, "w") as z:
+        for n, t in files.items():
+            z.writestr(n, t)
+    return path
+
+
+def test_install_refuses_mismatched_payload(tmp_path, monkeypatch):
+    exe_zip = _zip(tmp_path / "w.zip", {"ClipForge-9.9.9-win64/ClipForge.exe": "x",
+                                        "ClipForge-9.9.9-win64/VERSION": "9.9.9"})
+    src_zip = _zip(tmp_path / "s.zip", {"ClipForge-main/clipforge/__init__.py": '__version__ = "9.9.9"\n'})
+    target = tmp_path / "app"
+    target.mkdir()
+    monkeypatch.setattr(updater, "is_frozen", lambda: False)
+    monkeypatch.setattr(updater, "sync_requirements", lambda *a, **k: None)
+    with pytest.raises(ValueError, match="source"):
+        updater.install_zip(exe_zip, target)
+    assert updater.install_zip(src_zip, target) == "9.9.9"
+    monkeypatch.setattr(updater, "is_frozen", lambda: True)
+    with pytest.raises(ValueError, match="win64"):
+        updater.install_zip(src_zip, target)
+    assert updater.install_zip(exe_zip, target) == "9.9.9"

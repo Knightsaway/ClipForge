@@ -157,6 +157,11 @@ def install_zip(zip_path: str | Path, target: Path | None = None, expected_sha25
         source_payload = (tmp / "clipforge" / "__init__.py").exists()
         if not frozen_payload and not source_payload:
             raise ValueError("The update looks incomplete.")
+        if is_frozen() and not frozen_payload:
+            raise ValueError("That's a source zip — this ClipForge.exe install needs the ClipForge-*-win64.zip.")
+        if not is_frozen() and not source_payload:
+            raise ValueError("That's the ClipForge.exe (win64) zip — this install runs from source and needs a "
+                             "source zip (the repo's 'Download ZIP' or the release's source code zip).")
         for f in tmp.rglob("*"):
             if f.is_file():
                 dst = target / f.relative_to(tmp)
@@ -246,7 +251,9 @@ def pick_release_asset(assets: list, *, frozen: bool | None = None) -> dict | No
         if win64 is None:
             raise ValueError("No ClipForge-*-win64.zip on this release — frozen installs cannot use source zips.")
         return win64
-    return win64 if win64 is not None else (zips[0] if zips else None)
+    # Source installs (setup.bat + .venv) run the Python code, so the exe bundle would update nothing:
+    # take a non-win64 zip if the release has one, else None → the caller falls back to the source zipball.
+    return next((a for a in zips if "win64" not in a.get("name", "").lower()), None)
 
 
 def digest_from_sums_text(text: str, asset_name: str, sums_name: str) -> str:
