@@ -1,7 +1,7 @@
 # Changelog
 
-## [5.2.1](https://github.com/Knightsaway/ClipForge/compare/v5.2.0...v5.2.1) (2026-10-28)
+## [0.1.0](https://github.com/Knightsaway/ClipForge/releases/tag/v0.1.0) (2026-10-28)
 
-### Bug Fixes
+### Features
 
-* updates can track GitHub Releases or the `main` branch
+* initial public baseline (local replay buffer, editor, Auto Short)

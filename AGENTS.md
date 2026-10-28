@@ -134,6 +134,15 @@ In-app updater prefers the `*win64*.zip` asset and checks SHA256 when present.
 - FFmpeg is a **separate GPL binary** invoked via subprocess — see `THIRD_PARTY_NOTICES.md`.
 - Secrets (`giphy_key`, `phone_token`, `ntfy_topic`) go through `secrets_store` (DPAPI on Windows), not plaintext backups.
 
+## Git hygiene (non-negotiable)
+
+`main` has been force-rewritten before and orphaned feature branches. Agents must follow **CLAUDE.md**.
+
+- Never force-push `main`. Never rewrite commits already on `origin/main`.
+- Always `git fetch origin` before rebasing or opening a PR; fast-forward local `main` to `origin/main`.
+- Rebase feature work onto current `origin/main`. If there is no merge-base, stop and ask a human.
+- Force-push is only for the current feature branch after a requested rebase (`--force-with-lease`).
+
 ## Agent checklist before finishing a change
 
 1. Conventional commit message(s) match the change type (`feat` / `fix` / …).
@@ -141,3 +150,4 @@ In-app updater prefers the `*win64*.zip` asset and checks SHA256 when present.
 3. No secrets in the tree; no drive-by refactors unrelated to the task.
 4. If the change affects distribution, update `THIRD_PARTY_NOTICES.md` / README only when needed — not for every feature.
 5. Do not push tags or cut releases unless the user asked; merging to `main` with proper commits is enough for release-please.
+6. Confirm you did not rewrite `origin/main` history.

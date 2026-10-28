@@ -1,0 +1,13 @@
+---
+description: Strict git + release-please rules (never rewrite main)
+alwaysApply: true
+---
+
+# Git & releases (ClipForge)
+
+- Never force-push `main`. Never amend/rebase commits already on `origin/main`.
+- Always `git fetch origin` before branch/rebase/PR. Sync local `main` to `origin/main` first.
+- If `main` and a feature branch have no merge-base, stop and ask the human.
+- Force-push only the current feature branch after an explicit rebase, with `--force-with-lease`.
+- Conventional Commits only. Do not hand-bump versions or rewrite CHANGELOG for routine releases.
+- Do not push tags/releases unless asked. See `CLAUDE.md` and `AGENTS.md`.
