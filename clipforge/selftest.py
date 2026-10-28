@@ -15,14 +15,21 @@ from pathlib import Path
 
 def run(report: Path) -> int:
     lines, ok = [], True
+    report.write_text("STARTED\n", encoding="utf-8")
+
+    def flush(status="RUNNING"):
+        report.write_text("\n".join([status] + lines) + "\n", encoding="utf-8")
 
     def check(name, fn):
         nonlocal ok
+        lines.append(f"...   {name}")             # if it hangs, the report shows where
+        flush()
         try:
-            lines.append(f"ok    {name}: {fn() or ''}")
+            lines[-1] = f"ok    {name}: {fn() or ''}"
         except Exception:
             ok = False
-            lines.append(f"FAIL  {name}:\n{traceback.format_exc()}")
+            lines[-1] = f"FAIL  {name}:\n{traceback.format_exc()}"
+        flush()
 
     from PySide6.QtWidgets import QApplication
     app = QApplication.instance() or QApplication(sys.argv[:1])
@@ -106,6 +113,5 @@ def run(report: Path) -> int:
     for name, fn in (("modules", modules), ("window", window), ("images", images), ("ffmpeg", ffmpeg),
                      ("media", media)):
         check(name, fn)
-    lines.insert(0, "PASS" if ok else "FAIL")
-    report.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    flush("PASS" if ok else "FAIL")
     return 0 if ok else 1

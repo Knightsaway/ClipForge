@@ -55,7 +55,11 @@ $report = Join-Path $env:TEMP "clipforge-selftest.txt"
 Remove-Item $report -ErrorAction SilentlyContinue
 $p = Start-Process -FilePath "$out\ClipForge.exe" -ArgumentList "--selftest", "`"$report`"" -PassThru
 $null = $p.Handle   # keeps ExitCode readable after the process ends
-if (-not $p.WaitForExit(180000)) { $p.Kill(); Fail "Self-test timed out (3 min)" }
+if (-not $p.WaitForExit(180000)) {
+  $p.Kill()
+  $sofar = if (Test-Path $report) { (Get-Content $report -Raw) } else { "(no report written - it never started)" }
+  Fail ("Self-test timed out (3 min). Progress:`n" + $sofar)
+}
 $text = if (Test-Path $report) { (Get-Content $report -Raw) } else { "(no report written)" }
 Write-Host $text
 if ($p.ExitCode -ne 0) {

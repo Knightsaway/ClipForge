@@ -28,6 +28,18 @@ jobs:
         shell: pwsh
         run: ./scripts/build_windows.ps1
 
+      - name: Self-test from source (for comparison)
+        if: always()
+        shell: pwsh
+        run: |
+          pip install -r requirements.lock | Out-Null
+          $r = Join-Path $env:TEMP "src-selftest.txt"
+          $p = Start-Process python -ArgumentList "-m", "clipforge", "--selftest", "`"$r`"" -PassThru -NoNewWindow
+          $null = $p.Handle
+          if (-not $p.WaitForExit(180000)) { $p.Kill(); $t = "TIMED OUT`n" }
+          $t += if (Test-Path $r) { Get-Content $r -Raw } else { "(no report)" }
+          "::notice title=Source self-test::" + ($t -replace "`r?`n", "%0A")
+
       - name: Check the bundle
         shell: pwsh
         run: |

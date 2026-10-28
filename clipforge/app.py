@@ -24,7 +24,12 @@ def main():
         from . import selftest
         i = sys.argv.index("--selftest")
         out = sys.argv[i + 1] if len(sys.argv) > i + 1 else str(app_data_dir() / "selftest.txt")
-        sys.exit(selftest.run(Path(out)))
+        try:
+            code = selftest.run(Path(out))
+        except BaseException:
+            Path(out).write_text("FAIL\n" + traceback.format_exc(), encoding="utf-8")
+            code = 1
+        sys.exit(code)
     sys.excepthook = _log_exception
     try:
         faulthandler.enable(open(app_data_dir() / "crash.log", "a"))
