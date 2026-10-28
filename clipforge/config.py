@@ -87,7 +87,7 @@ class Settings:
     auto_transitions: bool = True      # automatic edits put quick transitions between clips
     auto_clean_days: int = 0           # delete unused clips older than this (0 = never)
     disk_warn_gb: int = 20             # warn when the clips drive has less free space than this
-    update_url: str = ""               # where to look for new versions (a version.json), optional
+    update_url: str = "github:Knightsaway/ClipForge"   # where new versions come from (GitHub repo or a version.json)
     ntfy_topic: str = ""               # phone push notifications via the free ntfy app
     wizard_done: bool = False
     game_overrides: dict = field(default_factory=dict)   # game -> {"fps", "quality", "buffer_seconds"}
@@ -174,6 +174,8 @@ def load_settings() -> Settings:
             setattr(s, k, v)
     if s.short_layout == "facecam_pip":       # older versions: now the movable webcam box
         s.short_layout = "blur"
+    if not s.update_url:                        # everyone gets updates from the ClipForge GitHub repo
+        s.update_url = Settings.update_url
     if not isinstance(s.cam_layout, dict):
         s.cam_layout = {}
     if s.short_layout == "facecam":          # older versions: "webcam on top" is now a webcam option

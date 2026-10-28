@@ -124,13 +124,11 @@ memory use stays flat however long the edit is.
 - **Updates from GitHub**: put `github:yourname/ClipForge` in Settings → Upkeep → Check online; ClipForge finds
   the newest release, downloads it and installs it.
 
-### Publishing updates on GitHub (for whoever shares ClipForge)
-1. Make a free GitHub account and a repository called `ClipForge` (it can be private only if everyone who
-   updates has access — public is simplest).
-2. Releases → *Draft a new release* → tag `v5.2.0` (the version in `clipforge/__init__.py`) → attach
-   `ClipForge.zip` → Publish.
-3. Everyone puts `github:yourname/ClipForge` in Settings → Upkeep → Check online. ClipForge checks at start and
-   installs with one click.
+### Updates come from GitHub
+ClipForge checks https://github.com/Knightsaway/ClipForge when it starts (Settings → Upkeep → Check online,
+`github:Knightsaway/ClipForge` by default). Whatever version is on the `main` branch — or in a newer Release, if
+there is one — is offered with one click. To publish an update, push it to `main` with a higher version in
+`clipforge/__init__.py`.
 
 ## v2 features
 

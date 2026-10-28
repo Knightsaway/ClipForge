@@ -76,7 +76,7 @@ class MaintenanceBox(QWidget):
         z.clicked.connect(self.install_zip_dialog)
         f.addRow(z)
         self.update_url = QLineEdit(s.update_url)
-        self.update_url.setPlaceholderText("optional: github:yourname/ClipForge — or a version.json address")
+        self.update_url.setPlaceholderText("github:Knightsaway/ClipForge")
         f.addRow("Check online", self.update_url)
         crow = QHBoxLayout()
         chk = QPushButton("Check now")

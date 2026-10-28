@@ -103,6 +103,15 @@ def _from_github(repo: str) -> dict:
             "notes": rel.get("body", "")}
 
 
+def _from_github_branch(repo: str, branch: str = "main") -> dict:
+    """The newest code on the repo's main branch (no release needed): version from clipforge/__init__.py."""
+    req = urllib.request.Request(f"https://raw.githubusercontent.com/{repo}/{branch}/clipforge/__init__.py",
+                                 headers={"User-Agent": "ClipForge/" + __version__})
+    txt = urllib.request.urlopen(req, timeout=10).read().decode("utf-8", "replace")
+    ver = next((ln.split("=", 1)[1].strip().strip("\"'") for ln in txt.splitlines() if ln.startswith("__version__")), "")
+    return {"version": ver, "url": f"https://github.com/{repo}/archive/refs/heads/{branch}.zip", "notes": ""}
+
+
 def check(url: str) -> dict | None:
     """Reads a version.json — or the latest release of a GitHub repo ('github:you/ClipForge') — and returns it
     if it's newer than this version."""
@@ -110,10 +119,16 @@ def check(url: str) -> dict | None:
         return None
     repo = _github_repo(url)
     if repo:
-        data = _from_github(repo)
-        if data.get("version") and data.get("url") and newer(data["version"], __version__):
-            return data
-        return None
+        found = []
+        for fn in (_from_github, _from_github_branch):      # a release if there is one, else the main branch
+            try:
+                d = fn(repo)
+                if d.get("version") and d.get("url"):
+                    found.append(d)
+            except Exception:
+                continue
+        best = max(found, key=lambda d: _vtuple(d["version"]), default=None)
+        return best if best and newer(best["version"], __version__) else None
     req = urllib.request.Request(url, headers={"User-Agent": "ClipForge/" + __version__})
     data = json.loads(urllib.request.urlopen(req, timeout=10).read().decode("utf-8"))
     if data.get("version") and data.get("url") and newer(data["version"], __version__):
