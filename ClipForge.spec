@@ -11,6 +11,7 @@ Check the result: dist\ClipForge\ClipForge.exe --selftest report.txt
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_submodules
@@ -97,7 +98,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=False,  # windowed; use run_debug / python -m for console
+    console=bool(os.environ.get("CLIPFORGE_CONSOLE")),  # windowed; CLIPFORGE_CONSOLE=1 for a debug build
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

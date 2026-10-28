@@ -51,3 +51,23 @@ jobs:
           $zip = (Get-Item check.zip).Length / 1MB
           $dir = ((Get-ChildItem dist\ClipForge -Recurse -File | Measure-Object Length -Sum).Sum) / 1MB
           "::notice title=Size::Release zip {0:N0} MB, unpacked {1:N0} MB" -f $zip, $dir
+
+      - name: Diagnose with a console build
+        if: failure()
+        shell: pwsh
+        env:
+          CLIPFORGE_CONSOLE: "1"
+        run: |
+          python -m PyInstaller --noconfirm --distpath dist_console ClipForge.spec *> pyi.txt
+          Copy-Item -Recurse ffmpeg dist_console\ClipForge\ffmpeg -ErrorAction SilentlyContinue
+          $r = Join-Path $env:TEMP "con-selftest.txt"
+          $p = Start-Process dist_console\ClipForge\ClipForge.exe -ArgumentList "--selftest", "`"$r`"" -PassThru `
+                 -RedirectStandardOutput out.txt -RedirectStandardError err.txt
+          $null = $p.Handle
+          if (-not $p.WaitForExit(120000)) { $p.Kill(); "TIMED OUT" | Add-Content err.txt }
+          $t = "exit=$($p.ExitCode)`n--- report ---`n" + $(if (Test-Path $r) { Get-Content $r -Raw } else { "(none)" })
+          $t += "`n--- stderr ---`n" + ((Get-Content err.txt -Tail 40) -join "`n")
+          $t += "`n--- stdout ---`n" + ((Get-Content out.txt -Tail 15) -join "`n")
+          "::notice title=Console run::" + ($t -replace "`r?`n", "%0A")
+          $w = Get-ChildItem build -Recurse -Filter "warn-*.txt" | Select-Object -First 1
+          if ($w) { "::notice title=Missing modules::" + (((Get-Content $w.FullName) | Select-String "top-level|delayed" | Select-Object -First 25) -join "%0A") }
