@@ -61,6 +61,42 @@ def test_parse_sha256sums():
     assert updater._parse_sha256sums(text, "other.zip") == ""
 
 
+def test_pick_release_asset_frozen_requires_win64():
+    assets = [
+        {"name": "source.zip", "browser_download_url": "https://example.com/source.zip"},
+        {"name": "SHA256SUMS", "browser_download_url": "https://example.com/SHA256SUMS"},
+    ]
+    with pytest.raises(ValueError, match="win64"):
+        updater.pick_release_asset(assets, frozen=True)
+    win = {"name": "ClipForge-9.9.9-win64.zip", "browser_download_url": "https://example.com/w.zip"}
+    assets.append(win)
+    assert updater.pick_release_asset(assets, frozen=True) is win
+    assert updater.pick_release_asset(assets, frozen=False) is win
+
+
+def test_pick_release_asset_source_fallback_when_not_frozen():
+    assets = [{"name": "ClipForge-src.zip", "browser_download_url": "https://example.com/s.zip"}]
+    assert updater.pick_release_asset(assets, frozen=False)["name"] == "ClipForge-src.zip"
+    assert updater.pick_release_asset([], frozen=False) is None
+
+
+def test_require_asset_digest_fail_closed():
+    digest = "aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899"
+    win = {"name": "ClipForge-5.2.1-win64.zip"}
+    assets = [win, {"name": "SHA256SUMS"}]
+    text = f"{digest}  ClipForge-5.2.1-win64.zip\n"
+    assert updater.require_asset_digest(assets, win, text) == digest
+    with pytest.raises(ValueError, match="Failed to fetch|refusing"):
+        updater.require_asset_digest(assets, win, None)
+    with pytest.raises(ValueError, match="Could not find"):
+        updater.require_asset_digest(assets, win, "deadbeef  other.zip\n")
+    with pytest.raises(ValueError, match="missing SHA256SUMS"):
+        updater.require_asset_digest([win], win, None)
+    # Non-win64 without SUMS: allowed (no digest)
+    src = {"name": "ClipForge-src.zip"}
+    assert updater.require_asset_digest([src], src, None) == ""
+
+
 def test_install_zip_and_version(tmp_path: Path):
     src = tmp_path / "src"
     (src / "clipforge").mkdir(parents=True)
