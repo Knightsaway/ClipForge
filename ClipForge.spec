@@ -56,7 +56,7 @@ if licenses.is_dir():
     datas.append((str(licenses), "licenses"))
 
 a = Analysis(
-    [str(ROOT / "clipforge" / "__main__.py")],
+    [str(ROOT / "scripts" / "clipforge_exe.py")],   # absolute imports; __main__.py is relative
     pathex=[str(ROOT)],
     binaries=[],
     datas=datas,
