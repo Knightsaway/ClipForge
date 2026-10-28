@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/Knightsaway/ClipForge/compare/v0.2.0...v0.2.1) (2026-10-28)
+
+
+### Bug Fixes
+
+* **ci:** make the Windows release build survive non-ASCII output ([#4](https://github.com/Knightsaway/ClipForge/issues/4)) ([9d0b6ce](https://github.com/Knightsaway/ClipForge/commit/9d0b6ce809846acd5e37ae98817eace905a6e6dd))
+
 ## [0.2.0](https://github.com/Knightsaway/ClipForge/compare/v0.1.0...v0.2.0) (2026-10-28)
 
 
