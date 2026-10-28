@@ -1,6 +1,10 @@
 # Build the Windows onedir release folder (run on Windows).
 # Usage: powershell -ExecutionPolicy Bypass -File scripts/build_windows.ps1
 $ErrorActionPreference = "Stop"
+# CI captures output through a pipe, where Windows Python defaults to cp1252 and crashes on any
+# non-ASCII character it prints. UTF-8 mode avoids that for every python call below.
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
 Set-Location (Split-Path $PSScriptRoot -Parent)
 
 Write-Host "==> Fetching pinned FFmpeg"

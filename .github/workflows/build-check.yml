@@ -1,0 +1,36 @@
+name: Windows build check
+
+# Runs the real release build (PyInstaller + vendored FFmpeg) on PRs that touch the build,
+# so a broken build shows up before a release is cut instead of after.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "scripts/**"
+      - "ClipForge.spec"
+      - "requirements.lock"
+      - ".github/workflows/**"
+  workflow_dispatch:
+
+jobs:
+  windows-build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Build onedir + vendor FFmpeg
+        shell: pwsh
+        run: ./scripts/build_windows.ps1
+
+      - name: Check the bundle
+        shell: pwsh
+        run: |
+          foreach ($f in "ClipForge.exe", "VERSION", "ffmpeg\bin\ffmpeg.exe", "THIRD_PARTY_NOTICES.md") {
+            if (-not (Test-Path "dist\ClipForge\$f")) { Write-Error "missing $f"; exit 1 }
+          }
+          Get-Content dist\ClipForge\VERSION
