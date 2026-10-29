@@ -219,3 +219,45 @@ def measure(pids_fn, seconds: float = 60, progress=None) -> Summary | None:
             break
         time.sleep(min(1.0, left))
     return summarize(samples, processes=procs)
+
+
+def proc_memory(pid: int, kind: str = "private") -> float | None:
+    """A process's memory in MB. kind="private": memory only it owns (committed); kind="ws": what it has in
+    RAM right now (its working set — close to Task Manager's Memory column)."""
+    if os.name != "nt":
+        try:
+            with open(f"/proc/{pid}/status") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        return int(line.split()[1]) / 1024
+        except OSError:
+            return None
+        return None
+    import ctypes
+    from ctypes import wintypes
+
+    class PMCX(ctypes.Structure):
+        _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t),
+                    ("PrivateUsage", ctypes.c_size_t)]
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.restype = wintypes.HANDLE
+    k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    k32.K32GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    h = k32.OpenProcess(0x1000, False, pid)
+    if not h:
+        return None
+    try:
+        m = PMCX()
+        m.cb = ctypes.sizeof(PMCX)
+        if k32.K32GetProcessMemoryInfo(h, ctypes.byref(m), m.cb):
+            return (m.WorkingSetSize if kind == "ws" else m.PrivateUsage) / 1048576
+        return None
+    finally:
+        k32.CloseHandle(h)
+
+

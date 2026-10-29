@@ -11,6 +11,9 @@ on:
       - "requirements.lock"
       - "clipforge/selftest.py"
       - "clipforge/updater.py"
+      - "clipforge/memreport.py"
+      - "clipforge/perf.py"
+      - "clipforge/ui/**"
       - "clipforge/voices.py"
       - "clipforge/commentator.py"
       - "installer/**"
@@ -51,6 +54,24 @@ jobs:
           $t = Get-Content $r -Raw
           "::notice title=Voice add-on::" + ($t -replace "`r?`n", "%0A")
           if ($p.ExitCode -ne 0 -or $t -notmatch "ok    voice") { exit 1 }
+
+      - name: Memory in real situations (400-clip library)
+        shell: pwsh
+        run: |
+          $lib = Join-Path $env:USERPROFILE "Videos\ClipForge\Desktop"
+          New-Item -ItemType Directory -Force $lib | Out-Null
+          $ff = "dist\ClipForge\ffmpeg\bin\ffmpeg.exe"
+          & $ff -v error -y -f lavfi -i "testsrc2=size=1920x1080:rate=60" -f lavfi -i "sine=frequency=440" -t 4 -c:v libx264 -preset ultrafast -crf 35 -c:a aac "$env:TEMP\tiny.mp4"
+          1..400 | ForEach-Object { Copy-Item "$env:TEMP\tiny.mp4" (Join-Path $lib ("Desktop 2026-10-{0:00} 12-{1:00}-{2:00} Clip {3}.mp4" -f (1 + $_ % 28), ($_ % 60), ($_ % 50), $_)) }
+          $r = Join-Path $env:TEMP "memreport.txt"
+          $p = Start-Process dist\ClipForge\ClipForge.exe -ArgumentList "--memreport", "`"$r`"" -PassThru
+          $null = $p.Handle
+          if (-not $p.WaitForExit(300000)) { $p.Kill() }
+          $t = if (Test-Path $r) { Get-Content $r -Raw } else { "(no report)" }
+          "::notice title=Memory::" + ($t -replace "`r?`n", "%0A")
+          $tray = [regex]::Match($t, "in the tray: in RAM (\d+)").Groups[1].Value
+          if (-not $tray) { Write-Error "memory report incomplete"; exit 1 }
+          if ([int]$tray -gt 350) { Write-Error "ClipForge holds $tray MB in the tray (limit 350)"; exit 1 }
 
       - name: Build and test the installer
         shell: pwsh
