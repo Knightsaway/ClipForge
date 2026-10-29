@@ -42,6 +42,8 @@ Copy-Item -Recurse "ffmpeg" "$out\ffmpeg"
 Note "==> Version + licenses"
 $ver = python -c "import clipforge; print(clipforge.__version__)"
 Set-Content -Path "$out\VERSION" -Value $ver -NoNewline
+$pv = (Get-Item "$out\ClipForge.exe").VersionInfo.ProductVersion
+if ($pv -ne $ver) { Fail "ClipForge.exe says version '$pv' but the release is $ver" }
 Copy-Item -Force LICENSE "$out\LICENSE"
 Copy-Item -Force THIRD_PARTY_NOTICES.md "$out\THIRD_PARTY_NOTICES.md"
 if (Test-Path CHANGELOG.md) { Copy-Item -Force CHANGELOG.md "$out\CHANGELOG.md" }
@@ -95,7 +97,13 @@ $newver = (Get-Content "$old\VERSION" -Raw).Trim()
 $result = Join-Path $env:APPDATA "ClipForge\update_result.txt"
 $res = if (Test-Path $result) { (Get-Content $result -Raw).Trim() } else { "(no result file)" }
 if ($newver -ne "9.9.9" -or $after -notmatch '^PASS') {
-  Fail ("Update test failed: VERSION after update = $newver, helper said: $res`n" + $after)
+  $ulog = Join-Path $env:APPDATA "ClipForge\update.log"
+  $ul = if (Test-Path $ulog) { (Get-Content $ulog -Tail 20) -join "`n" } else { "(no update.log)" }
+  $cl = Join-Path $env:APPDATA "ClipForge\clipforge.log"
+  $cll = if (Test-Path $cl) { (Get-Content $cl -Tail 15) -join "`n" } else { "" }
+  $ps = (Get-Process powershell -ErrorAction SilentlyContinue | ForEach-Object { "pid $($_.Id)" }) -join ", "
+  $st = if (Test-Path (Join-Path $env:APPDATA "ClipForge\update_staging\ClipForge.exe")) { "staging present" } else { "no staging" }
+  Fail ("Update test failed: VERSION after update = $newver, helper said: $res, $st, powershell: $ps`n--- update.log ---`n$ul`n--- clipforge.log ---`n$cll`n--- self-test after update ---`n" + $after)
 }
 Note "Update test: swapped to $newver while running, restarted, self-test PASS ($res)"
 

@@ -79,7 +79,7 @@ jobs:
             echo "## Downloads"
             echo "- **\`ClipForge-${ASSET_VER}-setup.exe\`** — installer (recommended): Start menu + desktop shortcut, uninstall from Windows settings, no admin needed."
             echo "- \`ClipForge-${ASSET_VER}-win64.zip\` — portable app (ClipForge.exe + vendored FFmpeg); unzip anywhere you can write to."
-            echo "- Windows may say \"Windows protected your PC\" because ClipForge isn't code-signed yet: click **More info → Run anyway**."
+            echo "- Windows may say \"Windows protected your PC\" because ClipForge isn't code-signed yet: click **More info → Run anyway**. ([code signing policy](https://github.com/Knightsaway/ClipForge/blob/main/docs/CODE_SIGNING.md) · [privacy](https://github.com/Knightsaway/ClipForge/blob/main/docs/PRIVACY.md))"
             echo "  See THIRD_PARTY_NOTICES.md inside for GPL/LGPL notices."
           } > /tmp/notes.md
           gh release edit "$TAG" --notes-file /tmp/notes.md

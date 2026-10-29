@@ -222,13 +222,18 @@ def swap_script(stage: Path, target: Path, pid: int, relaunch_args=(), result_fi
     """PowerShell that waits for ClipForge (pid) to exit, mirrors the staged files into the install
     folder (robocopy retries while files are still locked), records the result and starts ClipForge."""
     result_file = result_file or (staging_dir().parent / "update_result.txt")
+    log = result_file.with_name("update.log")
     args = ", ".join(_ps_quote(a) for a in relaunch_args)
     return f"""$ErrorActionPreference = 'Continue'
 $src = {_ps_quote(stage)}
 $dst = {_ps_quote(target)}
 $res = {_ps_quote(result_file)}
+$log = {_ps_quote(log)}
+function L($m) {{ Add-Content -Path $log -Value ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '  ' + $m) }}
+L "update helper started: waiting for ClipForge (pid {int(pid)}) to close"
 try {{ Wait-Process -Id {int(pid)} -Timeout 90 -ErrorAction SilentlyContinue }} catch {{}}
 Start-Sleep -Milliseconds 700
+L "copying $src -> $dst"
 $failed = @()
 foreach ($d in '_internal', 'ffmpeg') {{
   if (Test-Path (Join-Path $src $d)) {{
@@ -240,12 +245,14 @@ robocopy $src $dst /E /XD (Join-Path $src '_internal') (Join-Path $src 'ffmpeg')
 if ($LASTEXITCODE -ge 8) {{ $failed += "files ($LASTEXITCODE)" }}
 $ver = ''
 if (Test-Path (Join-Path $src 'VERSION')) {{ $ver = (Get-Content (Join-Path $src 'VERSION') -Raw).Trim() }}
+L ("copy done; problems: " + ($failed -join ', '))
 if ($failed.Count -eq 0) {{
   Remove-Item $src -Recurse -Force -ErrorAction SilentlyContinue
   Set-Content -Path $res -Value "ok $ver" -Encoding utf8
 }} else {{
   Set-Content -Path $res -Value ("failed $ver " + ($failed -join ', ')) -Encoding utf8
 }}
+L "starting ClipForge"
 $a = @({args})
 if ($a.Count -gt 0) {{ Start-Process -FilePath (Join-Path $dst 'ClipForge.exe') -ArgumentList $a -WorkingDirectory $dst }}
 else {{ Start-Process -FilePath (Join-Path $dst 'ClipForge.exe') -WorkingDirectory $dst }}
@@ -260,9 +267,19 @@ def start_swap(pid: int, relaunch_args=()) -> bool:
         return False
     script = Path(tempfile.gettempdir()) / f"clipforge_update_{pid}.ps1"
     script.write_text(swap_script(stage, app_root(), pid, relaunch_args), encoding="utf-8-sig")
-    flags = 0x08000000 | 0x00000008 if os.name == "nt" else 0     # no window, detached
-    subprocess.Popen(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
-                      "-File", str(script)], creationflags=flags, close_fds=True)
+    # its own process group, away from ClipForge's job, no console window; it must outlive ClipForge
+    flags = (0x00000200 | 0x01000000 | 0x08000000) if os.name == "nt" else 0
+    ps = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    exe = str(ps) if ps.exists() else "powershell"
+    with open(staging_dir().parent / "update.log", "a", encoding="utf-8") as f:
+        f.write(f"starting helper {exe} {script}\n")
+    cmd = [exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
+           "-File", str(script)]
+    io = dict(close_fds=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        subprocess.Popen(cmd, creationflags=flags, **io)
+    except OSError:                       # the job doesn't allow breaking away: stay in it (still outlives us)
+        subprocess.Popen(cmd, creationflags=flags & ~0x01000000, **io)
     return True
 
 

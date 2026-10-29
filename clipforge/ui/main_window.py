@@ -112,7 +112,8 @@ class MainWindow(QMainWindow):
         self.drafts_page.openDraft.connect(self._open_draft)
         self.studio.queued.connect(lambda *_: (self.render_queue.wake(), self._update_drafts_badge()))
         QTimer.singleShot(1500, self._update_drafts_badge)
-        QTimer.singleShot(20000, self._check_update_online)
+        if getattr(s, "update_check", True):
+            QTimer.singleShot(20000, self._check_update_online)
         QTimer.singleShot(60000, self._housekeeping)
         QTimer.singleShot(5000, lambda: self.lib.purge_deleted())
         self.setAcceptDrops(True)

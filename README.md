@@ -6,25 +6,33 @@ YouTube Short / TikTok.
 
 ## Install (once)
 
-1. Download **`ClipForge-*-win64.zip`** from
-   [Releases](https://github.com/Knightsaway/ClipForge/releases) (not a source checkout).
-2. Unzip somewhere permanent, e.g. `C:\ClipForge`.
-3. Run **`ClipForge.exe`**. FFmpeg is already vendored under `ffmpeg\bin\` (GPL — see
-   `THIRD_PARTY_NOTICES.md` inside the zip).
-4. **Quit SteelSeries GG Moments** (and turn off Instant Replay in the NVIDIA app) — they grab the
+1. Download **`ClipForge-X.Y.Z-setup.exe`** from
+   [Releases](https://github.com/Knightsaway/ClipForge/releases/latest) and run it. No admin needed: it
+   installs for you only, adds ClipForge to the Start menu (and the desktop if you like), and can be
+   removed in Windows Settings → Apps.
+   *Prefer no installer?* Take **`ClipForge-X.Y.Z-win64.zip`** instead and unzip it anywhere you can
+   write to (e.g. `C:\ClipForge`, not Program Files), then run `ClipForge.exe`.
+2. If Windows says **"Windows protected your PC"**, click **More info → Run anyway**. ClipForge isn't
+   code-signed yet ([code signing policy](docs/CODE_SIGNING.md)).
+3. **Quit SteelSeries GG Moments** (and turn off Instant Replay in the NVIDIA app) — they grab the
    same hotkeys and the same GPU encoder.
 
-Optional captions / AI caster / Ollama are separate add-ons (Settings or a source `setup.bat` for
-devs). Logs live in `%APPDATA%\ClipForge\`.
+FFmpeg is included (GPL — see `THIRD_PARTY_NOTICES.md`). Optional captions / AI caster / Ollama are
+separate add-ons. Logs live in `%APPDATA%\ClipForge\`. ClipForge has no telemetry — see
+[PRIVACY.md](docs/PRIVACY.md).
 
 ## Updating
 
-**In-app (recommended):** Settings → Upkeep → **Check now**. ClipForge downloads the newest **GitHub Release**
-zip, checks its SHA256 when published, overlays the new files, syncs Python packages, and restarts.
-Your clips, settings, drafts and `.venv` stay put.
+ClipForge checks for a new release when it starts (Settings → Upkeep → **Check now** to check yourself).
+It downloads it, checks its SHA-256, closes, swaps the files and starts again by itself. Your clips,
+settings and drafts are never touched. Running the newer setup.exe over an existing install also works.
 
-**Manual zip:** Quit ClipForge (tray icon → Quit), then unzip the new **win64** release **over the same
-folder**. Clips and settings live in Videos and AppData, so they're never lost.
+## Something wrong?
+
+**Diagnostics → 🐞 Report a bug** opens a GitHub issue with your ClipForge version, PC and the end of
+the log already filled in (your Windows user name is removed). **Diagnostics** also shows how much CPU,
+memory and disk ClipForge uses while it records; **⏱ Measure 60 s** while you play gives numbers you
+can quote.
 
 ## While playing
 

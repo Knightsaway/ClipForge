@@ -7,16 +7,44 @@ PySide6 hooks pull in exactly their DLLs and plugins), never the whole of Qt.
 Build (Windows):
   python scripts/fetch_ffmpeg.py
   pyinstaller --noconfirm ClipForge.spec
-Check the result: dist\ClipForge\ClipForge.exe --selftest report.txt
+Check the result: dist/ClipForge/ClipForge.exe --selftest report.txt
 """
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_submodules
 
 ROOT = Path(SPECPATH).resolve()
+
+# Product name/version stamped into ClipForge.exe (Properties → Details). Code-signing services and
+# antivirus heuristics look for it, and it must match the release version.
+VERSION_INFO = None
+if sys.platform == "win32":            # the version resource is Windows-only (needs pywin32 bits)
+    from PyInstaller.utils.win32 import versioninfo as vi  # noqa: E402
+
+    _ver = next(line.split("=", 1)[1].split("#")[0].strip().strip("\"'")
+                for line in (ROOT / "clipforge" / "__init__.py").read_text(encoding="utf-8").splitlines()
+                if line.startswith("__version__"))
+    _nums = tuple((list(int(x) for x in _ver.split(".")[:3] if x.isdigit()) + [0, 0, 0, 0])[:4])
+    VERSION_INFO = vi.VSVersionInfo(
+        ffi=vi.FixedFileInfo(filevers=_nums, prodvers=_nums),
+        kids=[
+            vi.StringFileInfo([vi.StringTable("040904B0", [
+                vi.StringStruct("CompanyName", "Knightsaway"),
+                vi.StringStruct("FileDescription", "ClipForge game recorder"),
+                vi.StringStruct("FileVersion", _ver),
+                vi.StringStruct("InternalName", "ClipForge"),
+                vi.StringStruct("LegalCopyright", "MIT License - Knightsaway and contributors"),
+                vi.StringStruct("OriginalFilename", "ClipForge.exe"),
+                vi.StringStruct("ProductName", "ClipForge"),
+                vi.StringStruct("ProductVersion", _ver),
+            ])]),
+            vi.VarFileInfo([vi.VarStruct("Translation", [1033, 1200])]),
+        ],
+    )
 
 # Every ClipForge module, including the ones only imported inside functions.
 hiddenimports = collect_submodules("clipforge") + [
@@ -99,7 +127,8 @@ exe = EXE(
     strip=False,
     upx=False,
     console=bool(os.environ.get("CLIPFORGE_CONSOLE")),
-    icon=str(ROOT / "assets" / "ClipForge.ico"),  # windowed; CLIPFORGE_CONSOLE=1 for a debug build
+    icon=str(ROOT / "assets" / "ClipForge.ico"),
+    version=VERSION_INFO,  # windowed; CLIPFORGE_CONSOLE=1 for a debug build
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
