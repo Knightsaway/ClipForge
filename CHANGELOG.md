@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.0](https://github.com/Knightsaway/ClipForge/compare/v0.4.0...v0.5.0) (2026-10-29)
+
+
+### Features
+
+* another take, mic reactions, crossfades, session drafts, natural caster voice ([295ace3](https://github.com/Knightsaway/ClipForge/commit/295ace3eaf9d6a7bdab16a748b8e5adccc8f62a6))
+
+
+### Bug Fixes
+
+* **capture:** no more silent clip endings (heard as the caster cutting the sound) ([57c7d12](https://github.com/Knightsaway/ClipForge/commit/57c7d121c2fae2aa8abbcb4e8a684c31103121ec))
+
 ## [0.4.0](https://github.com/Knightsaway/ClipForge/compare/v0.3.0...v0.4.0) (2026-10-29)
 
 
