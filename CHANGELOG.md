@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/Knightsaway/ClipForge/compare/v0.5.1...v0.5.2) (2026-10-29)
+
+
+### Performance Improvements
+
+* much less memory — paged library, lighter in the tray and while gaming ([#17](https://github.com/Knightsaway/ClipForge/issues/17)) ([4cad2dd](https://github.com/Knightsaway/ClipForge/commit/4cad2dd082326f8ef45ae99c20960feb8c4f1870))
+
 ## [0.5.1](https://github.com/Knightsaway/ClipForge/compare/v0.5.0...v0.5.1) (2026-10-29)
 
 
