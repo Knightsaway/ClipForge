@@ -272,16 +272,8 @@ def build_session_drafts(clips, s, n: int = 3, progress=None) -> list[dict]:
         if not pieces:
             break
         g = pieces[0]["clip"].game
-        if getattr(s, "auto_transitions", True):
-            from .editor import add_auto_transitions
-            add_auto_transitions(pieces)
-        if style.get("gifs", getattr(s, "auto_gifs", True)):
-            try:
-                from . import autogifs
-                if autogifs.available(s):
-                    autogifs.add_gifs(s, pieces, True)
-            except Exception as e:
-                print("inbox gifs:", e)
+        from .autoedit import caster_for, edit_pieces
+        pieces, _ = edit_pieces(pieces, s, style, add_fx=False)
         hook, ai_post = suggest_hook(g), None
         if getattr(s, "ai_enabled", False):
             try:
@@ -291,18 +283,7 @@ def build_session_drafts(clips, s, n: int = 3, progress=None) -> list[dict]:
                     hook = (ai_post.get("hooks") or [hook])[0]
             except Exception as e:
                 print("inbox ai:", e)
-        caster = []
-        if style.get("caster", getattr(s, "caster_auto", False)):
-            try:
-                from . import commentator
-                from .editor import Piece
-                if commentator.available():
-                    ps = [Piece(p["clip"].path, p["start"], p["end"], speed=p["speed"], effects=p["effects"])
-                          for p in pieces]
-                    caster = commentator.build_lines(ps, g, Path(tempfile.mkdtemp(prefix="caster_")),
-                                                     s.ai_enabled, s.ai_model, s.caster_voice)
-            except Exception as e:
-                print("inbox caster:", e)
+        caster = caster_for(pieces, s, g, style)
         from . import timeline_model as tm
         d = save({"origin": "session", "status": "draft", "title": hook, "game": g,
                   "length": round(tm.total(pieces), 1), "thumb": str(pieces[0]["clip"].thumb),

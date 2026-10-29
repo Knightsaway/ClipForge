@@ -207,13 +207,23 @@ TEXT_STYLE_NAMES = {"white": "White", "yellow": "Yellow", "red": "White on red b
 
 # transitions INTO a clip: (label, filter on the clip's first moments)
 TRANSITIONS = {
-    "flash": ("Flash", "fade=t=in:st=0:d=0.22:color=white"),
-    "zoom": ("Zoom punch", "zoompan=z='1+0.35*max(0,1-it/0.25)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+    "flash": ("Flash", "fade=t=in:st=0:d=0.3:color=white"),
+    "zoom": ("Zoom punch", "zoompan=z='1+0.35*max(0,1-it/0.3)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
                            "d=1:s={W}x{H}:fps={fps}"),
-    "whip": ("Whip pan", "dblur=angle=0:radius=70:enable='lt(t,0.16)'"),
-    "glitch": ("Glitch", "rgbashift=rh=24:bh=-24:enable='lt(t,0.22)',noise=alls=45:allf=t:enable='lt(t,0.22)'"),
-    "fade": ("Fade from black", "fade=t=in:st=0:d=0.3"),
+    "whip": ("Whip pan", "dblur=angle=0:radius=70:enable='lt(t,0.2)'"),
+    "glitch": ("Glitch", "rgbashift=rh=24:bh=-24:enable='lt(t,0.26)',noise=alls=45:allf=t:enable='lt(t,0.26)'"),
+    "fade": ("Fade from black", "fade=t=in:st=0:d=0.35"),
 }
+# ...and the clip BEFORE it leaves the same way ({st} = when its last moments start), so a transition is
+# felt on both sides of the cut instead of looking like a plain cut with a blip after it
+TRANSITIONS_OUT = {
+    "flash": (0.14, "fade=t=out:st={st}:d=0.14:color=white"),
+    "zoom": (0.12, "fade=t=out:st={st}:d=0.12:color=white"),
+    "whip": (0.14, "dblur=angle=0:radius=70:enable='gte(t,{st})'"),
+    "glitch": (0.16, "rgbashift=rh=-24:bh=24:enable='gte(t,{st})',noise=alls=45:allf=t:enable='gte(t,{st})'"),
+    "fade": (0.25, "fade=t=out:st={st}:d=0.25"),
+}
+TRANSITION_AUDIO = (0.15, 0.2)   # seconds the sound fades out / back in around a transition (a soft cut)
 
 def add_auto_transitions(pieces: list[dict], seed: int | None = None) -> int:
     """Automatic edits: every clip after the first comes in with a quick transition (mixed, never the same
@@ -341,8 +351,14 @@ def _wrap(text: str, width: int) -> str:
     return "\n".join(textwrap.wrap(text.strip(), width=width)) or " "
 
 
+def _next_transition(pieces: list[Piece], i: int) -> str:
+    if i + 1 >= len(pieces):
+        return ""
+    return next((e.get("name", "") for e in pieces[i + 1].effects if e.get("type") == "transition"), "")
+
+
 def _piece_cmd(i: int, p: Piece, preset: Preset, opts: RenderOptions, fps: int, out: Path,
-               encoder: tuple[str, str]) -> list[str]:
+               encoder: tuple[str, str], next_trans: str = "") -> list[str]:
     """One piece -> an intermediate file at final size/fps with its own layout, zoom, speed and audio."""
     W, H = preset.w, preset.h
     info = ff.probe(p.path)
@@ -434,11 +450,17 @@ def _piece_cmd(i: int, p: Piece, preset: Preset, opts: RenderOptions, fps: int, 
     if tf:   # the clip comes in with a flash / zoom / whip / glitch
         filters[-1] = filters[-1][:filters[-1].rfind("[v]")] + "[vt]"
         filters.append(f"[vt]{tf}[v]")
-
     dur_out = p.out_dur
+    out_tr = TRANSITIONS_OUT.get(next_trans)
+    if out_tr and dur_out > out_tr[0] * 3:   # ...and leaves with the start of the next clip's transition
+        filters[-1] = filters[-1][:filters[-1].rfind("[v]")] + "[vo]"
+        filters.append(f"[vo]{out_tr[1].format(st=f'{dur_out - out_tr[0]:.3f}')}[v]")
+
     fd = opts.fade_ms / 1000
-    fades = ([f"afade=t=in:d={fd}"] if p.fade_in else []) + \
-        ([f"afade=t=out:st={max(0, dur_out - fd):.3f}:d={fd}"] if p.fade_out else [])
+    fd_in = max(fd, TRANSITION_AUDIO[1]) if trans and dur_out > 1 else fd
+    fd_out = max(fd, TRANSITION_AUDIO[0]) if next_trans and dur_out > 1 else fd
+    fades = ([f"afade=t=in:d={fd_in}"] if p.fade_in else []) + \
+        ([f"afade=t=out:st={max(0, dur_out - fd_out):.3f}:d={fd_out}"] if p.fade_out else [])
     fade = ",".join(fades) or "anull"
     norm = "aresample=48000,aformat=channel_layouts=stereo"
     if abs(speed - 1) < 1e-3:
@@ -722,11 +744,11 @@ def render(pieces: list[Piece], preset_key: str, opts: RenderOptions, out: Path,
             def prog(f, m, frac0=frac0, span=span, i=i):
                 if progress:
                     progress(frac0 + span * f, f"Cutting piece {i+1}/{len(pieces)}…")
-            ok, err = _run_with_progress(_piece_cmd(i, p, preset, opts, fps, part, encoder), p.out_dur,
+            ok, err = _run_with_progress(_piece_cmd(i, p, preset, opts, fps, part, encoder, _next_transition(pieces, i)), p.out_dur,
                                          work, prog, cancel)
             if not ok and encoder[0] != "x264":
                 encoder = ("x264", "libx264")  # GPU encoder hiccup -> software fallback
-                ok, err = _run_with_progress(_piece_cmd(i, p, preset, opts, fps, part, encoder), p.out_dur,
+                ok, err = _run_with_progress(_piece_cmd(i, p, preset, opts, fps, part, encoder, _next_transition(pieces, i)), p.out_dur,
                                              work, prog, cancel)
             if not ok:
                 raise RuntimeError(f"piece {i+1}: " + (err[-1000:] or "failed"))

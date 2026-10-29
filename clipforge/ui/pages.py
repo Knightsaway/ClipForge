@@ -1434,39 +1434,12 @@ class StudioPage(QWidget):
                             (", GIFs" if use_gifs else "") + (", caster" if s.caster_auto else "") + "…")
 
         def work():
-            note = ""
-            nonlocal snapshot
             try:
-                if cut:
-                    from ..analysis import cut_spans, dead_spans
-                    before = sum(p["end"] - p["start"] for p in snapshot)
-                    new = []
-                    for p in snapshot:
-                        ev = tuple(sorted({round(e["t"], 1) for e in p["clip"].events} | set(p["clip"].markers)))
-                        new += cut_spans(p, dead_spans(p["clip"].path, round(p["start"], 2), round(p["end"], 2), ev))
-                    snapshot = new
-                    gone = before - sum(p["end"] - p["start"] for p in snapshot)
-                    if gone > 0.5:
-                        note += f", cut {gone:.0f} s of dead air"
-                if add_fx and not any(e.get("type") in ("zoom", "slowmo") for p in snapshot for e in p["effects"]):
-                    fxs, _ = self._auto_fx_for(snapshot)
-                    for p, fx in zip(snapshot, fxs):
-                        p["effects"] = fx + [e for e in p["effects"] if e.get("type") == "gif"]
-                if s.auto_transitions and len(snapshot) > 1:
-                    from ..editor import add_auto_transitions
-                    nt = add_auto_transitions(snapshot)
-                    note += f", {nt} transition{'s' if nt != 1 else ''}" if nt else ""
-                if use_gifs:
-                    from .. import autogifs
-                    if autogifs.available(s):
-                        n = autogifs.add_gifs(s, snapshot, vertical, montage=montage)
-                        note += f", {n} GIF{'s' if n != 1 else ''}" if n else ""
-                    else:
-                        note += " (no GIFs: save a GIPHY key in ＋ GIF / sticker, or put GIFs named like " \
-                               "'lets go', 'lol', 'wow' in your GIF folder)"
+                from ..autoedit import edit_pieces
+                new, note = edit_pieces(snapshot, s, style, montage=montage, add_fx=add_fx, vertical=vertical)
             except Exception as e:
-                note = f" (auto edit problem: {e})"
-            self.autoEditReady.emit({"pieces": snapshot, "note": note, "render": then_render})
+                new, note = snapshot, f" (auto edit problem: {e})"
+            self.autoEditReady.emit({"pieces": new, "note": note, "render": then_render})
         threading.Thread(target=work, daemon=True).start()
 
     def _auto_edit_done(self, res):
@@ -2377,33 +2350,8 @@ class StudioPage(QWidget):
 
     @staticmethod
     def _auto_fx_for(pieces: list[dict]) -> tuple[list[list], bool]:
-        """Effects for each piece: on kills / your markers, or — if a piece has neither — on the loudest,
-        most exciting moments in its sound. Safe to run in a background thread."""
-        from .. import vision
-        from ..highlights import find_moments
-        out, used_sound = [], False
-        for n, pc in enumerate(pieces):
-            c, a, b = pc["clip"], pc["start"], pc["end"]
-            kills = [e["t"] for e in c.events if a <= e["t"] <= b]
-            marks = [m - 0.4 for m in c.markers if a <= m <= b]
-            keys = sorted(kills or marks)
-            if not keys:
-                n_max = max(2, int((b - a) / 12))
-                try:
-                    keys = sorted(t for t, _ in find_moments(c.path, max_moments=n_max * 2) if a + 0.5 <= t <= b - 0.5)
-                    keys = keys[:n_max]
-                    used_sound = used_sound or bool(keys)
-                except Exception as e:
-                    print("moments:", e)
-            fx = [{"type": "zoom", "t": k, "amount": 0.22} for k in keys]
-            streaks = [x for x in vision.clusters([e for e in c.events if a <= e["t"] <= b]) if x["count"] >= 2]
-            fx += [{"type": "sfx", "t": x["t"], "name": "boom"} for x in streaks]
-            if n == 0 and keys:
-                fx.append({"type": "slowmo", "t": keys[-1], "dur": 1.0, "speed": 0.4})
-                if not streaks:
-                    fx.append({"type": "sfx", "t": keys[-1], "name": "boom"})
-            out.append(fx)
-        return out, used_sound
+        from ..autoedit import auto_fx_for
+        return auto_fx_for(pieces)
 
     def auto_fx_all(self):
         fxs, used_sound = self._auto_fx_for(self.pieces)

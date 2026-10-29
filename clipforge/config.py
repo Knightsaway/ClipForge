@@ -126,7 +126,8 @@ class Settings:
     loop_shorts: bool = True           # Shorts end by dissolving into their first frame (replays)
     tiktok_versions: bool = True       # every Short also gets a TikTok version with its own hook
     reaction_zoom: bool = True         # facecam punches in when you laugh / yell
-    caster_auto: bool = False          # put the AI caster voice on Auto Shorts
+    caster_auto: bool = False          # put the AI caster voice on Auto Shorts (off by default: still rough)
+    caster_reset_030: bool = False     # 0.3.x switched the caster off once for everyone
     caster_voice: str = "en_US-ryan-high"
     today_shorts: int = 3
     recap_enabled: bool = True         # 60 s recap after each gaming session (waits for approval)
@@ -180,6 +181,12 @@ def load_settings() -> Settings:
             setattr(s, k, v)
     if s.short_layout == "facecam_pip":       # older versions: now the movable webcam box
         s.short_layout = "blur"
+    if not s.caster_reset_030:                  # the caster isn't good enough yet: off for everyone, once
+        s.caster_auto = False
+        for st in (s.styles or {}).values():
+            if isinstance(st, dict) and st.get("caster"):
+                st["caster"] = False
+        s.caster_reset_030 = True
     if not s.update_url:                        # everyone gets updates from the ClipForge GitHub repo
         s.update_url = Settings.update_url
     if not isinstance(s.cam_layout, dict):

@@ -257,6 +257,15 @@ class MainWindow(QMainWindow):
             self.nav_btns.append((page, b))
             v.addWidget(b)
         v.addStretch(1)
+        # automatic videos are made in the background; this shows progress, then opens the result
+        self.gen_btn = QPushButton("")
+        self.gen_btn.setVisible(False)
+        self.gen_btn.setCursor(Qt.PointingHandCursor)
+        self.gen_btn.setStyleSheet("text-align:left; padding:8px 10px;")
+        self.gen_btn.clicked.connect(self._gen_clicked)
+        v.addWidget(self.gen_btn)
+        self._gen_running: dict[str, str] = {}    # job id -> "⏳ Generating Short… 40%"
+        self._gen_ready: list[dict] = []           # finished drafts waiting to be opened
         self.job_lbl = QLabel("")
         self.job_lbl.setObjectName("muted")
         self.job_lbl.setWordWrap(True)
@@ -723,20 +732,38 @@ class MainWindow(QMainWindow):
         self._nav(2)
 
     def _montage(self, clips):
-        """Create Montage: the clips go to the Studio already edited (effects, GIFs, hook) — ready to tweak."""
+        """Create Montage: edited in the background (dead air cut, effects, GIFs, transitions), then it waits
+        as a draft — click "open in Studio" to tweak it and render."""
         if not clips:
             return
-        self.studio.clear()
-        self._to_studio(clips)
-        self.studio.draft_origin = "montage"
-        if self.s.montage_auto_edit:
-            self.studio.auto_edit(add_fx=True, montage=True)
+        if self.s.montage_auto_edit and "montage" in self._gen_running:
+            self.toast.show_message("⏳ Already making a montage — it'll be ready in a moment", theme.ACCENT, 3000)
+            return
+        if not self.s.montage_auto_edit:
+            self.studio.clear()
+            self._to_studio(clips)
+            self.studio.draft_origin = "montage"
+            return
+        preset = self.studio.preset.currentData() or "youtube"
+        pieces = [{"clip": c, "start": c.trim_in, "end": c.trim_out or c.duration, "effects": [], "speed": 1.0}
+                  for c in clips]
+        self.library.clear_selection()
+        s = self.s
+
+        def job(progress):
+            from ..autoedit import generate_draft
+            return {"draft": generate_draft(pieces, s, origin="montage", preset=preset, montage=True, add_fx=True,
+                                            progress=progress)}
+        self._gen_start("montage", "montage")
+        self.jobs.run("montage", job)
 
     def _auto_short(self, clips):
         if not clips:
             QMessageBox.information(self, "Auto Short", "No clips to work with yet — save some clips first!")
             return
-        self.job_lbl.setText(f"⚡ Finding the best moments in {len(clips)} clips…")
+        if "plan" in self._gen_running:
+            self.toast.show_message("⏳ Already making a Short — it'll be ready in a moment", theme.ACCENT, 3000)
+            return
         target = self.s.short_target_seconds
         before, after = max(3.0, self.s.marker_pre * 0.4), max(1.5, float(self.s.marker_post))
         self._auto_clips = clips
@@ -748,8 +775,8 @@ class MainWindow(QMainWindow):
 
         def job(progress):
             excl = used_mod.exclusions() if no_repeats else []
-            plan = plan_short(clips, target=target, before=before, after=after, progress=progress, exclude=excl,
-                              auto_fx=self.s.auto_fx)
+            plan = plan_short(clips, target=target, before=before, after=after, exclude=excl,
+                              progress=lambda f, m: progress(0.6 * f, m), auto_fx=self.s.auto_fx)
             post = None
             if ai_on and plan:
                 try:
@@ -761,7 +788,17 @@ class MainWindow(QMainWindow):
                                              True, model, analytics.winning_hooks(items))
                 except Exception as e:
                     print("ai:", e)
-            return {"plan": plan, "ai": post}
+            if not plan:
+                return {"draft": None}
+            by_path = {c.path: c for c in clips}
+            pieces = [{"clip": by_path[p.path], "start": p.start, "end": p.end, "effects": list(p.effects),
+                       "speed": p.speed} for p in plan if p.path in by_path]
+            from ..autoedit import generate_draft
+            d = generate_draft(pieces, self.s, origin="auto", preset="short", ai_post=post,
+                               hook=((post or {}).get("hooks") or [""])[0], add_fx=False,
+                               progress=lambda f, m: progress(0.6 + 0.4 * f, m))
+            return {"draft": d}
+        self._gen_start("plan", "Short")
         self.jobs.run("plan", job)
 
     def _quick_export(self, clip, key):
@@ -1175,26 +1212,40 @@ class MainWindow(QMainWindow):
         self.jobs.run("script", job)
 
     def _job_progress(self, job, f, msg):
+        if job in self._gen_running:
+            what = "Short" if job == "plan" else "montage"
+            self._gen_running[job] = f"⏳ Generating {what}… {int(f * 100)}%"
+            self.gen_btn.setToolTip(msg)
+            self._gen_refresh()
+            return
         if job in ("plan", "export", "scan", "script", "bestof", "today", "series", "recap", "monthly", "inbox"):
             self.job_lbl.setText(f"{msg} {int(f*100)}%")
 
     def _job_done(self, job, res):
-        if job == "plan":
-            self.job_lbl.setText("")
-            if not res or not res.get("plan"):
-                QMessageBox.information(self, "Auto Short", "Couldn't find usable moments in those clips.")
+        if job in ("plan", "montage"):
+            self._gen_running.pop(job, None)
+            d = (res or {}).get("draft")
+            if not d:
+                self._gen_refresh()
+                QMessageBox.information(self, "Auto Short" if job == "plan" else "Montage",
+                                        "Couldn't find usable moments in those clips.")
                 return
-            self.studio.clear()
-            if res.get("ai") and res["ai"].get("hooks"):
-                self.studio.ai_post = res["ai"]
-                self.studio.hook.setText(res["ai"]["hooks"][0])
-            self.studio.load_plan(res["plan"], self._auto_clips)
-            self.studio.draft_origin = "auto"
-            self.library.clear_selection()
-            self._nav(2)
-            # the edit happens in the Studio: GIFs and the caster are added there, where you can change them.
-            # With "review first" on (default) nothing renders until you press Render video.
-            self.studio.auto_edit(add_fx=False, then_render=not self.s.auto_review)
+            self._update_drafts_badge()
+            if job == "plan" and not self.s.auto_review:     # "render without asking": straight to the queue
+                from .. import drafts
+                drafts.update(d["id"], status="queued", queued_at=time.time())
+                self.render_queue.wake()
+                self._gen_refresh()
+                self.toast.show_message("⚡ Short edited — rendering in the background (see Drafts)", theme.GREEN, 5000)
+                return
+            self._gen_ready.append(d)
+            self._gen_refresh()
+            what = "Short" if job == "plan" else "Montage"
+            self.toast.show_message(f"✔ {what} ready — click it on the left to open it in the Studio",
+                                    theme.GREEN, 6000)
+            if not self.isActiveWindow():
+                self.tray.showMessage("ClipForge", f"Your {what.lower()} is edited and ready to check",
+                                      QSystemTrayIcon.Information, 5000)
         elif job == "inbox":
             self.job_lbl.setText("")
             if res:
@@ -1237,7 +1288,49 @@ class MainWindow(QMainWindow):
             self._nav(2)
             self.studio.render()
 
+    def _gen_start(self, job: str, what: str):
+        self._gen_running[job] = f"⏳ Generating {what}…"
+        self._gen_refresh()
+
+    def _gen_refresh(self):
+        b = self.gen_btn
+        if self._gen_running:
+            b.setObjectName("")
+            texts = list(self._gen_running.values())
+            b.setText(texts[0] if len(texts) == 1 else f"⏳ Generating {len(texts)} videos…")
+            if self._gen_ready:
+                b.setText(b.text() + f"\n✔ {len(self._gen_ready)} ready")
+        elif self._gen_ready:
+            b.setObjectName("primary")
+            d = self._gen_ready[-1]
+            b.setText("✔ Video ready — open in Studio" if len(self._gen_ready) == 1
+                      else f"✔ {len(self._gen_ready)} videos ready — open")
+            b.setToolTip(d.get("title", "") + (f"\n{d['note']}" if d.get("note") else ""))
+        b.setVisible(bool(self._gen_running or self._gen_ready))
+        b.style().unpolish(b)
+        b.style().polish(b)
+
+    def _gen_clicked(self):
+        if not self._gen_ready:
+            self.toast.show_message("Still editing — it's done in a moment. Keep playing!", theme.ACCENT, 2500)
+            return
+        if len(self._gen_ready) > 1:          # several waiting: show them all in Drafts
+            self._gen_ready.clear()
+            self._gen_refresh()
+            self._nav(8)
+            return
+        from .. import drafts
+        d = drafts.load(self._gen_ready.pop()["id"])
+        self._gen_refresh()
+        if d:
+            self._open_draft(d)
+
     def _job_failed(self, job, err):
+        if job in self._gen_running:
+            self._gen_running.pop(job, None)
+            self._gen_refresh()
+            QMessageBox.warning(self, "Automatic edit", f"The automatic edit failed: {err}")
+            return
         if job == "bestof":
             self.job_lbl.setText("")
             print("best-of failed:", err)

@@ -145,7 +145,7 @@ class SetupWizard(QDialog):
         f.addRow("Layout", self.layout_box)
         self.caps = QCheckBox("Word-by-word captions")
         self.caps.setChecked(s.captions)
-        self.caster = QCheckBox("AI caster reacts to big moments")
+        self.caster = QCheckBox("AI caster reacts to big moments (experimental)")
         self.caster.setChecked(s.caster_auto)
         self.gifs = QCheckBox("A few small GIF stickers on big moments")
         self.gifs.setChecked(s.auto_gifs)
