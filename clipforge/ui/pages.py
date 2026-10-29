@@ -676,6 +676,7 @@ class ClipPicker(QDialog):
 # ====================================================================== studio
 class StudioPage(QWidget):
     rendered = Signal(object)
+    anotherTake = Signal(dict)     # "Try another edit": the main window makes it in the background
 
     def __init__(self, s: Settings, lib: Library, jobs: Jobs):
         super().__init__()
@@ -1107,6 +1108,11 @@ class StudioPage(QWidget):
         rc.addWidget(right_scroll, 1)
         rc.addWidget(self.status)
         rc.addWidget(self.bar)
+        self.another_btn = QPushButton("🎲  Try another edit")
+        self.another_btn.setToolTip("Same clips, a different take: other moments, another hook, other transitions,\n"
+                                    "effects and GIFs. This edit stays in Drafts so you can pick the best one.")
+        self.another_btn.clicked.connect(self._another_take)
+        rc.addWidget(self.another_btn)
         rrow = QHBoxLayout()
         rrow.addWidget(self.render_btn, 1)
         self.queue_btn = QPushButton("＋ Queue")
@@ -1411,6 +1417,22 @@ class StudioPage(QWidget):
         self._mark()
 
     autoEditReady = Signal(object)
+
+    def _another_take(self):
+        if not self.pieces:
+            self.status.setText("Add some clips first — then 🎲 makes a different take of them.")
+            return
+        self.save_draft()                       # keep this one: it waits in Drafts next to the new take
+        clips, seen = [], set()
+        for p in self.pieces:
+            if p["clip"].path not in seen:
+                seen.add(p["clip"].path)
+                clips.append(p["clip"])
+        self.anotherTake.emit({
+            "clips": clips, "origin": self.draft_origin or "auto", "preset": self.preset.currentData(),
+            "exclude": [(p["clip"].path, p["start"], p["end"]) for p in self.pieces], "hook": self.hook.text()})
+        self.status.setText("🎲 Making another take in the background — it shows up on the left when it's ready. "
+                            "This edit is saved in Drafts.")
 
     def auto_edit(self, add_fx: bool = True, montage: bool = False, then_render: bool = False):
         """The automatic edit, done inside the Studio so you can change anything before rendering:
@@ -2130,7 +2152,8 @@ class StudioPage(QWidget):
         """How long the hook shows: the whole video with a seamless loop (so the seam is invisible)."""
         from .. import timeline_model as tm
         tot = tm.total(self.pieces)
-        if self.hook_whole or (self.loop.isChecked() and self._is_short() and not self.script
+        from ..editor import LOOP_HOOK_MAX
+        if self.hook_whole or (self.loop.isChecked() and self._is_short() and not self.script and tot <= LOOP_HOOK_MAX
                                and not getattr(self, "hook_user", False)):
             return max(0.5, tot - self.hook_start)
         return self.hook_secs
@@ -2820,22 +2843,37 @@ class SettingsPage(QWidget):
         f.addRow(self.montage_auto)
         self.cut_boring = QCheckBox("Create Montage cuts out dead air")
         self.cut_boring.setChecked(s.auto_cut_boring)
+        self.mic_moments = QCheckBox("Laughing or yelling on my mic counts as a highlight")
+        self.mic_moments.setToolTip("Auto Short and session drafts also pick the moments you reacted to —\n"
+                                    "with a second or two before it, so the video shows what was so funny.")
+        self.mic_moments.setChecked(getattr(s, "mic_moments", True))
         self.no_repeats = QCheckBox("Never reuse a moment that's already in another video")
         self.no_repeats.setChecked(s.no_repeats)
         inbox_row = QHBoxLayout()
-        self.inbox = QCheckBox("After a session, make its best")
+        self.inbox = QCheckBox("When I stop playing, make my session's best")
+        self.inbox.setToolTip("2 minutes after the game closes, ClipForge edits your session's best moments into\n"
+                              "Shorts in the background. They wait as drafts — nothing renders or gets posted.")
         self.inbox.setChecked(s.session_inbox)
         self.inbox_n = QSpinBox()
         self.inbox_n.setRange(1, 6)
         self.inbox_n.setValue(s.session_inbox_count)
         inbox_row.addWidget(self.inbox)
         inbox_row.addWidget(self.inbox_n)
-        inbox_row.addWidget(QLabel("Shorts as drafts (Drafts → Inbox)"))
+        inbox_row.addWidget(QLabel("Shorts, ready as drafts"))
         inbox_row.addStretch(1)
         self.auto_trans = QCheckBox("Auto edits add transitions between clips")
         self.auto_trans.setChecked(s.auto_transitions)
         f.addRow(self.auto_trans)
+        self.trans_style = QComboBox()
+        for key, label in (("punchy", "Punchy — flash, zoom, whip, glitch"), ("smooth", "Smooth — crossfades"),
+                           ("mix", "Mix of both")):
+            self.trans_style.addItem(label, key)
+        self.trans_style.setCurrentIndex(max(0, self.trans_style.findData(getattr(s, "transition_style", "punchy"))))
+        self.trans_style.setEnabled(s.auto_transitions)
+        self.auto_trans.toggled.connect(self.trans_style.setEnabled)
+        f.addRow("Transition style", self.trans_style)
         f.addRow(self.cut_boring)
+        f.addRow(self.mic_moments)
         f.addRow(self.no_repeats)
         f.addRow(inbox_row)
         f.addRow("My sound effects", row3)
@@ -3198,9 +3236,11 @@ class SettingsPage(QWidget):
         s.montage_auto_edit = self.montage_auto.isChecked()
         s.auto_cut_boring = self.cut_boring.isChecked()
         s.auto_transitions = self.auto_trans.isChecked()
+        s.transition_style = self.trans_style.currentData()
         s.quick_trim = self.quick_trim.isChecked()
         s.no_repeats = self.no_repeats.isChecked()
         s.session_inbox = self.inbox.isChecked()
+        s.mic_moments = self.mic_moments.isChecked()
         s.session_inbox_count = self.inbox_n.value()
         new_skin = self.skin.currentData() or "legacy"
         if new_skin != s.skin:

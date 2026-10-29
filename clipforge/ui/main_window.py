@@ -34,6 +34,9 @@ class Bridge(QObject):
     hotkey = Signal(str)
 
 
+INBOX_AFTER = 120   # seconds after the game closes before the session's Shorts are made
+
+
 class MainWindow(QMainWindow):
     def __init__(self, s: Settings, start_minimized=False):
         super().__init__()
@@ -122,6 +125,7 @@ class MainWindow(QMainWindow):
         self.library.toStudio.connect(self._to_studio)
         self.library.montage.connect(self._montage)
         self.library.autoShort.connect(self._auto_short)
+        self.studio.anotherTake.connect(self._another_take)
         self.clip_page.back.connect(lambda: self._nav(0))
         self.clip_page.toStudio.connect(self._to_studio)
         self.clip_page.exportClip.connect(self._quick_export)
@@ -266,6 +270,7 @@ class MainWindow(QMainWindow):
         v.addWidget(self.gen_btn)
         self._gen_running: dict[str, str] = {}    # job id -> "⏳ Generating Short… 40%"
         self._gen_ready: list[dict] = []           # finished drafts waiting to be opened
+        self._gen_labels: dict[str, str] = {}
         self.job_lbl = QLabel("")
         self.job_lbl.setObjectName("muted")
         self.job_lbl.setWordWrap(True)
@@ -602,8 +607,12 @@ class MainWindow(QMainWindow):
         from .. import drafts as _drafts
         s = self.s
 
+        if "inbox" in self._gen_running:
+            return
+
         def job(progress):
-            return len(_drafts.build_session_drafts(clips, s, s.session_inbox_count, progress))
+            return _drafts.build_session_drafts(clips, s, s.session_inbox_count, progress)
+        self._gen_start("inbox", "Shorts from your session")
         self.jobs.run("inbox", job)
 
     def _release_file(self, path: str):
@@ -744,7 +753,7 @@ class MainWindow(QMainWindow):
             self._to_studio(clips)
             self.studio.draft_origin = "montage"
             return
-        preset = self.studio.preset.currentData() or "youtube"
+        preset = self.studio.preset.currentData() or "youtube1080"
         pieces = [{"clip": c, "start": c.trim_in, "end": c.trim_out or c.duration, "effects": [], "speed": 1.0}
                   for c in clips]
         self.library.clear_selection()
@@ -756,6 +765,18 @@ class MainWindow(QMainWindow):
                                             progress=progress)}
         self._gen_start("montage", "montage")
         self.jobs.run("montage", job)
+
+    def _another_take(self, info: dict):
+        if "another" in self._gen_running:
+            self.toast.show_message("⏳ Already making another take — one moment", theme.ACCENT, 3000)
+            return
+        s = self.s
+
+        def job(progress):
+            from ..autoedit import another_take
+            return {"draft": another_take(info, s, progress)}
+        self._gen_start("another", "another take")
+        self.jobs.run("another", job)
 
     def _auto_short(self, clips):
         if not clips:
@@ -776,6 +797,7 @@ class MainWindow(QMainWindow):
         def job(progress):
             excl = used_mod.exclusions() if no_repeats else []
             plan = plan_short(clips, target=target, before=before, after=after, exclude=excl,
+                              use_mic=getattr(self.s, "mic_moments", True),
                               progress=lambda f, m: progress(0.6 * f, m), auto_fx=self.s.auto_fx)
             post = None
             if ai_on and plan:
@@ -957,15 +979,22 @@ class MainWindow(QMainWindow):
                 self._session_start = now
             self._last_game_seen = now
             return
-        if not self._session_start or now - self._last_game_seen < 10 * 60:
+        if not self._session_start:
             return
         start, end = self._session_start, self._last_game_seen
+        # 2 minutes after you stop playing: your session's best Shorts get made, ready when you look
+        if now - end >= INBOX_AFTER and getattr(self, "_inbox_for", None) != end and end - start >= 5 * 60:
+            self._inbox_for = end
+            if self.s.session_inbox:
+                clips = content.session_clips(self.library.clips, start)
+                if clips:
+                    self._session_inbox(clips)
+        if now - end < 10 * 60:
+            return
         self._session_start = 0.0
         if end - start < self.s.recap_min_minutes * 60:
             return
         clips = content.session_clips(self.library.clips, start)
-        if self.s.session_inbox and clips:
-            self._session_inbox(clips)
         if not self.s.recap_enabled or len(clips) < 2:
             return
         s = self.s
@@ -1213,7 +1242,7 @@ class MainWindow(QMainWindow):
 
     def _job_progress(self, job, f, msg):
         if job in self._gen_running:
-            what = "Short" if job == "plan" else "montage"
+            what = self._gen_labels.get(job, "video")
             self._gen_running[job] = f"⏳ Generating {what}… {int(f * 100)}%"
             self.gen_btn.setToolTip(msg)
             self._gen_refresh()
@@ -1222,12 +1251,12 @@ class MainWindow(QMainWindow):
             self.job_lbl.setText(f"{msg} {int(f*100)}%")
 
     def _job_done(self, job, res):
-        if job in ("plan", "montage"):
+        if job in ("plan", "montage", "another"):
             self._gen_running.pop(job, None)
             d = (res or {}).get("draft")
             if not d:
                 self._gen_refresh()
-                QMessageBox.information(self, "Auto Short" if job == "plan" else "Montage",
+                QMessageBox.information(self, {"plan": "Auto Short", "montage": "Montage"}.get(job, "Another take"),
                                         "Couldn't find usable moments in those clips.")
                 return
             self._update_drafts_badge()
@@ -1240,14 +1269,17 @@ class MainWindow(QMainWindow):
                 return
             self._gen_ready.append(d)
             self._gen_refresh()
-            what = "Short" if job == "plan" else "Montage"
+            what = {"plan": "Short", "montage": "Montage"}.get(job, "Another take")
             self.toast.show_message(f"✔ {what} ready — click it on the left to open it in the Studio",
                                     theme.GREEN, 6000)
             if not self.isActiveWindow():
                 self.tray.showMessage("ClipForge", f"Your {what.lower()} is edited and ready to check",
                                       QSystemTrayIcon.Information, 5000)
         elif job == "inbox":
-            self.job_lbl.setText("")
+            self._gen_running.pop("inbox", None)
+            self._gen_ready += list(res or [])
+            self._gen_refresh()
+            res = len(res or [])
             if res:
                 self._update_drafts_badge()
                 self.toast.show_message(f"📥 {res} Short{'s' if res != 1 else ''} from your session are waiting in "
@@ -1289,6 +1321,7 @@ class MainWindow(QMainWindow):
             self.studio.render()
 
     def _gen_start(self, job: str, what: str):
+        self._gen_labels[job] = what
         self._gen_running[job] = f"⏳ Generating {what}…"
         self._gen_refresh()
 
@@ -1329,6 +1362,9 @@ class MainWindow(QMainWindow):
         if job in self._gen_running:
             self._gen_running.pop(job, None)
             self._gen_refresh()
+            if job == "inbox":                  # happened on its own after a session: don't pop up a dialog
+                print("session drafts failed:", err)
+                return
             QMessageBox.warning(self, "Automatic edit", f"The automatic edit failed: {err}")
             return
         if job == "bestof":

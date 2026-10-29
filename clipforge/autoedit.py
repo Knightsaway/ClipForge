@@ -41,12 +41,15 @@ def auto_fx_for(pieces: list[dict]) -> tuple[list[list], bool]:
 
 
 def edit_pieces(pieces: list[dict], s, style: dict | None, *, montage: bool = False, add_fx: bool = True,
-                vertical: bool = True, progress=None) -> tuple[list[dict], str]:
+                vertical: bool = True, progress=None, seed: int | None = None) -> tuple[list[dict], str]:
     """Dead air (montages), effects, transitions and GIFs on Studio-style piece dicts. Returns (pieces, note)."""
     style = style or {}
     prog = progress or (lambda f, m: None)
     note = ""
     pieces = [dict(p, effects=[dict(e) for e in p.get("effects", [])]) for p in pieces]
+    from .autoshort import _sound_limit
+    for p in pieces:                       # never end on a stretch where the clip's sound is missing
+        p["end"] = _sound_limit(p["clip"], p["start"], p["end"])
     if montage and style.get("cut_boring", getattr(s, "auto_cut_boring", True)):
         prog(0.15, "✂ Cutting the boring parts…")
         try:
@@ -69,7 +72,7 @@ def edit_pieces(pieces: list[dict], s, style: dict | None, *, montage: bool = Fa
             p["effects"] = fx + [e for e in p["effects"] if e.get("type") == "gif"]
     if getattr(s, "auto_transitions", True) and len(pieces) > 1:
         from .editor import add_auto_transitions
-        nt = add_auto_transitions(pieces)
+        nt = add_auto_transitions(pieces, seed=seed, style=getattr(s, "transition_style", "punchy"))
         note += f", {nt} transition{'s' if nt != 1 else ''}" if nt else ""
     if style.get("gifs", getattr(s, "auto_gifs", True)):
         prog(0.55, "🎞 Picking GIFs…")
@@ -103,7 +106,7 @@ def caster_for(pieces: list[dict], s, game: str, style: dict | None = None) -> l
 
 def generate_draft(pieces: list[dict], s, *, origin: str, preset: str = "short", hook: str = "",
                    ai_post: dict | None = None, montage: bool = False, add_fx: bool = True,
-                   progress=None) -> dict | None:
+                   progress=None, seed: int | None = None) -> dict | None:
     """Builds the whole automatic edit and saves it as a draft (status 'draft'). Nothing renders here."""
     from . import drafts
     from . import timeline_model as tm
@@ -116,7 +119,8 @@ def generate_draft(pieces: list[dict], s, *, origin: str, preset: str = "short",
     game = pieces[0]["clip"].game or "Clips"
     style = style_for(s, game)
     vertical = PRESETS[preset].vertical
-    pieces, note = edit_pieces(pieces, s, style, montage=montage, add_fx=add_fx, vertical=vertical, progress=prog)
+    pieces, note = edit_pieces(pieces, s, style, montage=montage, add_fx=add_fx, vertical=vertical, progress=prog,
+                               seed=seed)
     if vertical and not hook:
         hook = ((ai_post or {}).get("hooks") or [suggest_hook(game)])[0]
     caster = []
@@ -132,3 +136,50 @@ def generate_draft(pieces: list[dict], s, *, origin: str, preset: str = "short",
     return drafts.save({"origin": origin, "status": "draft", "title": title, "game": game,
                         "length": round(tm.total(pieces), 1), "thumb": str(pieces[0]["clip"].thumb),
                         "note": note.lstrip(", "), "edit": edit})
+
+
+def another_take(info: dict, s, progress=None) -> dict | None:
+    """\"Try another edit\": the same clips, a different take — other moments (an Auto Short avoids the ones the
+    current edit uses), a new order for a montage, another hook, other transitions, effects and GIFs."""
+    import random
+
+    from . import used
+    from .autoshort import plan_short, suggest_hook
+    prog = progress or (lambda f, m: None)
+    clips = info["clips"]
+    if not clips:
+        return None
+    seed = random.randrange(1 << 30)
+    rnd = random.Random(seed)
+    from .editor import PRESETS
+    vertical = PRESETS.get(info.get("preset") or "short", PRESETS["short"]).vertical
+    if info.get("origin") == "montage" or not vertical:
+        pieces = [{"clip": c, "start": c.trim_in, "end": c.trim_out or c.duration, "effects": [], "speed": 1.0}
+                  for c in clips]
+        rnd.shuffle(pieces)
+        return generate_draft(pieces, s, origin="montage", preset=info.get("preset") or "youtube1080",
+                              montage=True, add_fx=True, seed=seed, progress=prog)
+    common = dict(target=getattr(s, "short_target_seconds", 30), before=max(3.0, getattr(s, "marker_pre", 8) * 0.4),
+                  after=max(1.5, float(getattr(s, "marker_post", 3))), auto_fx=getattr(s, "auto_fx", True),
+                  use_mic=getattr(s, "mic_moments", True))
+    excl = list(info.get("exclude") or [])
+    if getattr(s, "no_repeats", True):
+        excl += used.exclusions()
+    prog(0.02, "🎲 Looking for other moments…")
+    plan = plan_short(clips, exclude=excl, progress=lambda f, m: prog(0.4 * f, m), **common)
+    if not plan:        # every good moment is already used: same moments, but cut and ordered differently
+        plan = plan_short(clips, progress=lambda f, m: prog(0.4 * f, m), **common)
+        rnd.shuffle(plan)
+    by_path = {c.path: c for c in clips}
+    pieces = [{"clip": by_path[p.path], "start": p.start, "end": p.end, "effects": list(p.effects),
+               "speed": p.speed} for p in plan if p.path in by_path]
+    if not pieces:
+        return None
+    game = pieces[0]["clip"].game
+    hook = suggest_hook(game)
+    for _ in range(10):
+        if hook != info.get("hook"):
+            break
+        hook = suggest_hook(game)
+    return generate_draft(pieces, s, origin=info.get("origin") or "auto", preset=info.get("preset") or "short",
+                          hook=hook, add_fx=False, seed=seed, progress=lambda f, m: prog(0.4 + 0.6 * f, m))

@@ -96,8 +96,27 @@ def _sapi(text: str, out: Path) -> bool:
         return False
 
 
+def _piper_usable() -> bool:
+    if getattr(sys, "frozen", False):          # the exe can't run "python -m piper"
+        return False
+    try:
+        import piper  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
 def speak(text: str, out: Path, voice: str = DEFAULT_VOICE) -> bool:
-    return _piper(text, out, voice) or _sapi(text, out)
+    """Best available voice: the natural Kokoro add-on (when installed / chosen), then Piper, then Windows."""
+    from . import voices
+    kokoro = voice.startswith("kokoro:")
+    if kokoro or (voices.installed() and not _piper_usable()):
+        kv = voice.split(":", 1)[1] if kokoro else voices.DEFAULT
+        if voices.speak(text, out, kv):
+            return True
+    if not kokoro and _piper_usable() and _piper(text, out, voice):
+        return True
+    return _sapi(text, out)
 
 
 def build_track(pieces: list[Piece], game: str, work: Path, ai_on=False, model="", voice=DEFAULT_VOICE,
@@ -162,9 +181,10 @@ def build_lines(pieces: list[Piece], game: str, work: Path, ai_on=False, model="
 
 
 def available() -> str:
-    """Which voice engine will be used: 'piper', 'windows' or ''."""
-    try:
-        import piper  # noqa: F401
+    """Which voice engine will be used: 'kokoro', 'piper', 'windows' or ''."""
+    from . import voices
+    if voices.installed():
+        return "kokoro"
+    if _piper_usable():
         return "piper"
-    except Exception:
-        return "windows" if IS_WINDOWS else ""
+    return "windows" if IS_WINDOWS else ""

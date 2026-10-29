@@ -431,6 +431,9 @@ class V3SettingsBox(QWidget):
 
 class V4SettingsBox(QWidget):
     """Automation: phone approvals, loops, TikTok versions, reaction zoom, caster, recaps, monthly, series."""
+    voiceProgress = Signal(float, str)
+    voiceDone = Signal(str)
+    sampleReady = Signal(str)
 
     def __init__(self, s: Settings, phone_url=lambda: ""):
         super().__init__()
@@ -509,14 +512,117 @@ class V4SettingsBox(QWidget):
         self.caster.setChecked(s.caster_auto)
         self.voice = QComboBox()
         self.voice.setEditable(True)
-        self.voice.addItems(["en_US-ryan-high", "en_US-lessac-high", "en_GB-alan-medium", "en_US-joe-medium",
-                             "no_NO-talesyntese-medium"])
+        self._fill_voices()
         self.voice.setCurrentText(s.caster_voice)
-        self.voice.setToolTip("Piper voice name (downloaded on first use). Norwegian works too!")
+        self.voice.setToolTip("kokoro:… = the natural voice add-on. Other names are Piper voices (source installs).")
         for w in (self.loop, self.tik, self.rz, self.caster):
             f.addRow(w)
         f.addRow("Caster voice", self.voice)
+        # the natural voice add-on (Kokoro) — optional, so ClipForge itself stays small
+        from .. import voices
+        vrow = QHBoxLayout()
+        self.voice_btn = QPushButton("")
+        self.voice_btn.clicked.connect(self._voice_addon)
+        self.voice_test = QPushButton("▶ Test voice")
+        self.voice_test.clicked.connect(self._test_voice)
+        self.voice_lbl = QLabel("")
+        self.voice_lbl.setObjectName("muted")
+        self.voice_lbl.setWordWrap(True)
+        vrow.addWidget(self.voice_btn)
+        vrow.addWidget(self.voice_test)
+        vrow.addWidget(self.voice_lbl, 1)
+        f.addRow("Natural voice", vrow)
+        self.voiceProgress.connect(lambda fr, m: (self.voice_lbl.setText(m), self.voice_btn.setEnabled(False)))
+        self.voiceDone.connect(self._voice_done)
+        self.sampleReady.connect(self._play_sample)
+        self._voice_state()
+        if not voices.supported():
+            self.voice_btn.setVisible(False)
         v.addWidget(g)
+
+    def _fill_voices(self):
+        from .. import voices
+        cur = self.voice.currentText() if self.voice.count() else ""
+        self.voice.clear()
+        if voices.installed():
+            self.voice.addItems([f"kokoro:{v}" for v in voices.VOICES])
+        self.voice.addItems(["en_US-ryan-high", "en_US-lessac-high", "en_GB-alan-medium", "en_US-joe-medium",
+                             "no_NO-talesyntese-medium"])
+        if cur:
+            self.voice.setCurrentText(cur)
+
+    def _voice_state(self):
+        from .. import voices
+        if voices.installed():
+            self.voice_btn.setText("Remove")
+            self.voice_btn.setToolTip("Delete the natural voice add-on (frees ~145 MB)")
+            self.voice_lbl.setText("✔ Natural voice (Kokoro) installed — pick a kokoro: voice above")
+        else:
+            self.voice_btn.setText(f"⬇ Get natural voice (~{voices.SIZE_MB} MB)")
+            self.voice_btn.setToolTip("Downloads Kokoro, a free voice that sounds far more human than the Windows\n"
+                                      "voice. Runs offline on your PC; files are checksum-verified.")
+            self.voice_lbl.setText("Without it the caster uses the built-in Windows voice")
+        self.voice_btn.setEnabled(True)
+
+    def _voice_addon(self):
+        import threading
+
+        from .. import voices
+        if voices.installed():
+            voices.remove()
+            if self.voice.currentText().startswith("kokoro:"):
+                self.voice.setCurrentText("en_US-ryan-high")
+            self._fill_voices()
+            self._voice_state()
+            return
+
+        def work():
+            try:
+                voices.install(lambda fr, m: self.voiceProgress.emit(fr, m))
+                self.voiceDone.emit("")
+            except Exception as e:
+                self.voiceDone.emit(str(e))
+        self.voice_btn.setEnabled(False)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _voice_done(self, err: str):
+        self._fill_voices()
+        self._voice_state()
+        if err:
+            self.voice_lbl.setText(f"⚠ Couldn't install the natural voice: {err}")
+        else:
+            from .. import voices
+            self.voice.setCurrentText(f"kokoro:{voices.DEFAULT}")
+
+    def _test_voice(self):
+        import tempfile
+        import threading
+        from pathlib import Path
+
+        from .. import commentator
+        voice = self.voice.currentText().strip()
+        self.voice_test.setEnabled(False)
+        self.voice_lbl.setText("Speaking…")
+
+        def work():
+            out = Path(tempfile.gettempdir()) / "clipforge_voice_test.wav"
+            ok = commentator.speak("Oh he's done it again! The lobby is in shambles!", out, voice)
+            self.sampleReady.emit(str(out) if ok else "")
+        threading.Thread(target=work, daemon=True).start()
+
+    def _play_sample(self, path: str):
+        self.voice_test.setEnabled(True)
+        if not path:
+            self.voice_lbl.setText("⚠ No voice engine worked for that voice")
+            return
+        from PySide6.QtCore import QUrl
+
+        from .player import make_audio_player
+        if not hasattr(self, "_sample_player"):
+            self._sample_player, self._sample_out = make_audio_player(self)
+        self._sample_player.setSource(QUrl.fromLocalFile(path))
+        self._sample_player.play()
+        self._voice_state()
 
     def _copy(self):
         from PySide6.QtGui import QGuiApplication

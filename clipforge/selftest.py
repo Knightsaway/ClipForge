@@ -110,8 +110,22 @@ def run(report: Path) -> int:
             raise RuntimeError(f"ffmpeg lacks {missing}")
         return " + ".join(out) + " with " + ", ".join(need)
 
-    for name, fn in (("modules", modules), ("window", window), ("images", images), ("ffmpeg", ffmpeg),
-                     ("media", media)):
+    def voice():
+        """Only when the natural-voice add-on is installed: it must load inside the exe and speak."""
+        import tempfile
+
+        from . import voices
+        out = Path(tempfile.mkdtemp(prefix="clipforge_voice_")) / "line.wav"
+        if not voices.speak("What a play!", out):
+            raise RuntimeError("the natural voice add-on is installed but didn't speak")
+        from . import ff
+        return f"Kokoro spoke {ff.duration(out):.1f} s"
+
+    checks = [("modules", modules), ("window", window), ("images", images), ("ffmpeg", ffmpeg), ("media", media)]
+    from . import voices as _v
+    if _v.installed():
+        checks.append(("voice", voice))
+    for name, fn in checks:
         check(name, fn)
     flush("PASS" if ok else "FAIL")
     return 0 if ok else 1

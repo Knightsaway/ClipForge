@@ -27,6 +27,20 @@ ClipForge checks for a new release when it starts (Settings → Upkeep → **Che
 It downloads it, checks its SHA-256, closes, swaps the files and starts again by itself. Your clips,
 settings and drafts are never touched. Running the newer setup.exe over an existing install also works.
 
+## Automatic edits, your way
+
+- **Auto Short, Create Montage and your session's best Shorts** are edited in the background — nothing plays
+  while ClipForge works. The button on the left shows the progress, then *open in Studio*.
+- **🎲 Try another edit** (Studio): same clips, a different take — other moments, hook, transitions and GIFs.
+  The current edit stays in Drafts, so you can keep the best one.
+- **Your reactions count**: laughing or yelling on your mic is picked up as a highlight (with the moment
+  that caused it). Settings → Editing.
+- **Transitions**: punchy (flash, zoom, whip, glitch), smooth crossfades, or a mix. Settings → Editing.
+- **When I stop playing**: 2 minutes after the game closes, your session's best Shorts wait as drafts.
+  On by default; switch it off in Settings → Editing.
+- **AI caster** (off by default, experimental): Settings → Automation. *Get natural voice* downloads Kokoro
+  (~145 MB, free, runs offline) for a far more human voice than the built-in Windows one.
+
 ## Something wrong?
 
 **Diagnostics → 🐞 Report a bug** opens a GitHub issue with your ClipForge version, PC and the end of

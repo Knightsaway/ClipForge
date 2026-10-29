@@ -55,7 +55,14 @@ hiddenimports = collect_submodules("clipforge") + [
     "PySide6.QtMultimediaWidgets",
     "numpy",
     "soundcard",
-]
+] + [
+    # standard-library modules the optional natural-voice add-on (Kokoro, loaded from AppData) needs
+    "asyncio", "concurrent.futures.process", "multiprocessing.pool", "multiprocessing.connection",
+    "multiprocessing.queues", "multiprocessing.synchronize", "multiprocessing.reduction",
+    "multiprocessing.resource_tracker", "pydoc", "decimal", "uuid", "mmap", "importlib.metadata",
+    "importlib.resources", "dataclasses", "ctypes.util", "ctypes.wintypes", "pprint", "inspect", "dis", "lzma",
+    "bz2", "pickle", "runpy", "sysconfig", "shlex", "email", "glob", "numbers", "logging", "textwrap", "tokenize",
+] + [m for m in collect_submodules("numpy") if not any(x in m for x in (".tests", "f2py", "distutils", "testing"))]
 
 # Qt modules ClipForge never uses. Excluding them keeps their DLLs, QML files and plugins out.
 QT_UNUSED = [

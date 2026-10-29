@@ -213,7 +213,10 @@ TRANSITIONS = {
     "whip": ("Whip pan", "dblur=angle=0:radius=70:enable='lt(t,0.2)'"),
     "glitch": ("Glitch", "rgbashift=rh=24:bh=-24:enable='lt(t,0.26)',noise=alls=45:allf=t:enable='lt(t,0.26)'"),
     "fade": ("Fade from black", "fade=t=in:st=0:d=0.35"),
+    "crossfade": ("Crossfade", ""),   # a real blend of the two clips (picture + sound), made when joining
 }
+XFADE = 0.45          # seconds the two clips overlap in a crossfade
+PUNCHY = ["flash", "zoom", "whip", "glitch"]
 # ...and the clip BEFORE it leaves the same way ({st} = when its last moments start), so a transition is
 # felt on both sides of the cut instead of looking like a plain cut with a blip after it
 TRANSITIONS_OUT = {
@@ -223,19 +226,21 @@ TRANSITIONS_OUT = {
     "glitch": (0.16, "rgbashift=rh=-24:bh=24:enable='gte(t,{st})',noise=alls=45:allf=t:enable='gte(t,{st})'"),
     "fade": (0.25, "fade=t=out:st={st}:d=0.25"),
 }
-TRANSITION_AUDIO = (0.15, 0.2)   # seconds the sound fades out / back in around a transition (a soft cut)
+TRANSITION_AUDIO = (0.15, 0.2)
+LOOP_HOOK_MAX = 60.0   # a seamless-loop Short keeps its hook up all the way (hides the seam) — only when it's short   # seconds the sound fades out / back in around a transition (a soft cut)
 
-def add_auto_transitions(pieces: list[dict], seed: int | None = None) -> int:
-    """Automatic edits: every clip after the first comes in with a quick transition (mixed, never the same
-    twice in a row). Studio piece dicts are changed in place; clips that already have one are left alone."""
+def add_auto_transitions(pieces: list[dict], seed: int | None = None, style: str = "punchy") -> int:
+    """Automatic edits: every clip after the first comes in with a transition — punchy ones (mixed, never the
+    same twice in a row), smooth crossfades, or a mix of both. Studio piece dicts are changed in place;
+    clips that already have one are left alone."""
     import random
     rnd = random.Random(seed)
-    names = ["flash", "zoom", "whip", "glitch"]
+    names = {"smooth": ["crossfade"], "mix": PUNCHY + ["crossfade", "crossfade"]}.get(style, PUNCHY)
     last, n = "", 0
     for pc in pieces[1:]:
         if any(e.get("type") == "transition" for e in pc.get("effects", [])):
             continue
-        name = rnd.choice([x for x in names if x != last])
+        name = rnd.choice([x for x in names if x != last] or names)
         pc.setdefault("effects", []).append({"type": "transition", "name": name, "t": pc["start"]})
         last, n = name, n + 1
     return n
@@ -351,6 +356,38 @@ def _wrap(text: str, width: int) -> str:
     return "\n".join(textwrap.wrap(text.strip(), width=width)) or " "
 
 
+def _inter_venc(encoder: tuple[str, str], fps: int) -> list[str]:
+    """Near-lossless intermediate; the final pass does the real (upload) encode."""
+    vendor, enc = encoder
+    if vendor == "nvenc":
+        return ["-c:v", enc, "-preset", "p4", "-rc", "constqp", "-qp", "14", "-g", str(fps)]
+    if vendor == "x264":
+        return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "14", "-g", str(fps)]
+    return ["-c:v", enc, "-b:v", "60M", "-g", str(fps)]
+
+
+def _transition_of(p: Piece) -> str:
+    return next((e.get("name", "") for e in p.effects if e.get("type") == "transition"), "")
+
+
+def _crossfade_cmd(a: Path, a_dur: float, pre: Path, b: Path, b_dur: float, x: float, out: Path,
+                   encoder: tuple[str, str], fps: int) -> list[str]:
+    """Blends the end of part A into part B. B's pre-roll (the x seconds just before it in its clip) plays
+    under A's last x seconds, so B itself still starts exactly where it sits on the timeline and the
+    video keeps its length (= nothing on the timeline moves)."""
+    off = max(0.0, a_dur - x)
+    f = (f"[1:v][2:v]concat=n=2:v=1:a=0,settb=AVTB[bv];[0:v]settb=AVTB[av];"
+         f"[av][bv]xfade=transition=fade:duration={x:.3f}:offset={off:.3f},format=yuv420p[v];"
+         f"[1:a][2:a]concat=n=2:v=0:a=1[ba];"
+         f"[0:a]afade=t=out:st={off:.3f}:d={x:.3f}[aa];"
+         f"[ba]afade=t=in:d={x:.3f},adelay={int(off * 1000)}:all=1[bb];"
+         f"[aa][bb]amix=inputs=2:duration=longest:normalize=0,atrim=0:{a_dur + b_dur:.3f}[a]")
+    return ([ff.ffmpeg_bin(), "-hide_banner", "-y", "-nostats", "-progress", "pipe:1", "-v", "error",
+             "-i", str(a), "-i", str(pre), "-i", str(b), "-filter_complex", f, "-map", "[v]", "-map", "[a]"]
+            + _inter_venc(encoder, fps) +
+            ["-pix_fmt", "yuv420p", "-c:a", "pcm_s16le", "-ar", "48000", "-t", f"{a_dur + b_dur:.3f}", str(out)])
+
+
 def _next_transition(pieces: list[Piece], i: int) -> str:
     if i + 1 >= len(pieces):
         return ""
@@ -446,6 +483,10 @@ def _piece_cmd(i: int, p: Piece, preset: Preset, opts: RenderOptions, fps: int, 
     else:
         filters.append(f"[l]{sp}fps={fps},format=yuv420p[v]")
     trans = next((e.get("name") for e in p.effects if e.get("type") == "transition"), "")
+    if trans == "crossfade":
+        trans = ""
+    if next_trans == "crossfade":
+        next_trans = ""
     tf = TRANSITIONS.get(trans, ("", ""))[1].format(W=W, H=H, fps=fps) if trans else ""
     if tf:   # the clip comes in with a flash / zoom / whip / glitch
         filters[-1] = filters[-1][:filters[-1].rfind("[v]")] + "[vt]"
@@ -486,14 +527,7 @@ def _piece_cmd(i: int, p: Piece, preset: Preset, opts: RenderOptions, fps: int, 
         filters.append(f"[0:a:0]{norm},volume={p.game_volume},{tempo}{fade},apad[a]")
     else:
         filters.append("anullsrc=r=48000:cl=stereo[a]")
-    vendor, enc = encoder
-    # near-lossless intermediate; the final pass does the real (upload) encode
-    if vendor == "nvenc":
-        venc = ["-c:v", enc, "-preset", "p4", "-rc", "constqp", "-qp", "14", "-g", str(fps)]
-    elif vendor == "x264":
-        venc = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "14", "-g", str(fps)]
-    else:
-        venc = ["-c:v", enc, "-b:v", "60M", "-g", str(fps)]
+    venc = _inter_venc(encoder, fps)
     return ([ff.ffmpeg_bin(), "-hide_banner", "-y", "-nostats", "-progress", "pipe:1", "-v", "error",
              "-ss", f"{p.start:.3f}", "-t", f"{p.dur:.3f}", "-i", p.path] + alt_in + gif_in +
             ["-filter_complex", ";".join(filters), "-map", "[v]", "-map", "[a]"] + venc +
@@ -529,7 +563,7 @@ def build_final(parts: list[Path], pieces: list[Piece], preset: Preset, opts: Re
                    f"atrim=0:{footage - X + 0.5:.3f}[ac]"]
         footage += 0.5 - X
         total = max(total, footage)
-        if not opts.extra.get("hook_fixed"):
+        if not opts.extra.get("hook_fixed") and total <= LOOP_HOOK_MAX:
             opts.hook_seconds = max(opts.hook_seconds, total + 1)  # same text on both sides of the seam
     else:
         filters = ["[0:v]null[vc]", "[0:a]anull[ac]"]
@@ -737,6 +771,7 @@ def render(pieces: list[Piece], preset_key: str, opts: RenderOptions, out: Path,
         total_out = sum(p.out_dur for p in pieces) or 1.0
         # pieces take ~60% of the time, the final pass ~40%
         parts, done = [], 0.0
+        part_first: list[int] = []           # index of the first piece in each part (crossfades merge parts)
         for i, p in enumerate(pieces):
             part = work / f"part_{i:03d}.mkv"
             frac0, span = 0.6 * done / total_out, 0.6 * p.out_dur / total_out
@@ -752,7 +787,27 @@ def render(pieces: list[Piece], preset_key: str, opts: RenderOptions, out: Path,
                                              work, prog, cancel)
             if not ok:
                 raise RuntimeError(f"piece {i+1}: " + (err[-1000:] or "failed"))
+            if (_transition_of(p) == "crossfade" and parts and p.start > 0.1 and p.out_dur > XFADE * 2
+                    and pieces[i - 1].out_dur > XFADE * 2):
+                x = min(XFADE, p.start)
+                pre_p = Piece(p.path, p.start - x, p.start, p.mic_volume, p.game_volume, 1.0, [],
+                              p.alt_path, p.alt_offset, p.label, p.alt_label, fade_in=False, fade_out=False)
+                pre = work / f"pre_{i:03d}.mkv"
+                merged = work / f"xf_{i:03d}.mkv"
+                a_dur = sum(q.out_dur for q in pieces[part_first[-1]:i])
+                ok, err = _run_with_progress(_piece_cmd(i, pre_p, preset, opts, fps, pre, encoder), x, work,
+                                             lambda f, m: None, cancel)
+                if ok:
+                    ok, err = _run_with_progress(_crossfade_cmd(parts[-1], a_dur, pre, part, p.out_dur, x, merged,
+                                                                encoder, fps), a_dur + p.out_dur, work,
+                                                 lambda f, m: None, cancel)
+                if ok:
+                    parts[-1] = merged                 # A+B are one part now (same total length)
+                    done += p.out_dur
+                    continue
+                print("crossfade skipped:", err[-300:])
             parts.append(part)
+            part_first.append(i)
             done += p.out_dur
 
         def fprog(f, m):

@@ -11,6 +11,8 @@ on:
       - "requirements.lock"
       - "clipforge/selftest.py"
       - "clipforge/updater.py"
+      - "clipforge/voices.py"
+      - "clipforge/commentator.py"
       - "installer/**"
       - "assets/**"
       - ".github/workflows/**"
@@ -30,6 +32,25 @@ jobs:
       - name: Build onedir + vendor FFmpeg
         shell: pwsh
         run: ./scripts/build_windows.ps1
+
+      - name: Natural voice add-on inside the exe
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\ClipForge\ClipForge.exe -ArgumentList "--install-voice" -PassThru
+          $null = $p.Handle
+          if (-not $p.WaitForExit(900000)) { $p.Kill(); Write-Error "voice download timed out"; exit 1 }
+          if ($p.ExitCode -ne 0) {
+            $l = Join-Path $env:APPDATA "ClipForge\clipforge.log"
+            "::error title=Voice add-on::install failed%0A" + (((Get-Content $l -Tail 20 -ErrorAction SilentlyContinue)) -join "%0A")
+            exit 1
+          }
+          $r = Join-Path $env:TEMP "voice-selftest.txt"
+          $p = Start-Process dist\ClipForge\ClipForge.exe -ArgumentList "--selftest", "`"$r`"" -PassThru
+          $null = $p.Handle
+          if (-not $p.WaitForExit(300000)) { $p.Kill(); Write-Error "voice self-test timed out"; exit 1 }
+          $t = Get-Content $r -Raw
+          "::notice title=Voice add-on::" + ($t -replace "`r?`n", "%0A")
+          if ($p.ExitCode -ne 0 -or $t -notmatch "ok    voice") { exit 1 }
 
       - name: Build and test the installer
         shell: pwsh

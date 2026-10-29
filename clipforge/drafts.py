@@ -263,7 +263,7 @@ def build_session_drafts(clips, s, n: int = 3, progress=None) -> list[dict]:
         plan = plan_short(clips, target=getattr(s, "short_target_seconds", 30),
                           before=max(3.0, getattr(s, "marker_pre", 8) * 0.4),
                           after=max(1.5, float(getattr(s, "marker_post", 3))), auto_fx=getattr(s, "auto_fx", True),
-                          exclude=excl)
+                          exclude=excl, use_mic=getattr(s, "mic_moments", True))
         if not plan:
             break
         excl = excl + [(p.path, p.start, p.end) for p in plan]
