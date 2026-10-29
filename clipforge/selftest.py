@@ -121,7 +121,36 @@ def run(report: Path) -> int:
         from . import ff
         return f"Kokoro spoke {ff.duration(out):.1f} s"
 
-    checks = [("modules", modules), ("window", window), ("images", images), ("ffmpeg", ffmpeg), ("media", media)]
+    def render():
+        """A tiny Short through the real renderer with the bundled FFmpeg: loop ending, a crossfade, a flash,
+        text and a hook — the filters most likely to differ between FFmpeg versions."""
+        import tempfile
+
+        from . import editor, ff
+        from .editor import Piece, RenderOptions
+        work = Path(tempfile.mkdtemp(prefix="clipforge_render_"))
+        srcs = []
+        for k, colour in enumerate(("red", "blue")):
+            src = work / f"src{k}.mp4"
+            r = ff.run([ff.ffmpeg_bin(), "-y", "-hide_banner", "-f", "lavfi", "-i", f"color=c={colour}:size=640x360:rate=60",
+                        "-f", "lavfi", "-i", "sine=frequency=440", "-t", "6", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", str(src)], timeout=60)
+            if r.returncode != 0:
+                raise RuntimeError("couldn't make a test clip: " + r.stderr[-300:])
+            srcs.append(str(src))
+        pieces = [Piece(srcs[0], 0, 3), Piece(srcs[1], 2, 4, effects=[{"type": "transition", "name": "crossfade", "t": 2}]),
+                  Piece(srcs[0], 3, 5, effects=[{"type": "transition", "name": "flash", "t": 3}])]
+        o = RenderOptions(hook_text="SELF TEST")
+        o.extra["loop"] = True
+        o.extra["texts"] = [{"t": 1, "dur": 1, "text": "OK", "cx": 0.5, "cy": 0.5}]
+        out = editor.render(pieces, "short", o, work / "short.mp4")
+        d = ff.duration(out)
+        if not d or abs(d - 7.05) > 0.3:
+            raise RuntimeError(f"rendered video is {d} s long, expected ~7.05")
+        return f"9:16 Short with loop + crossfade rendered ({d:.2f} s)"
+
+    checks = [("modules", modules), ("window", window), ("images", images), ("ffmpeg", ffmpeg), ("media", media),
+              ("render", render)]
     from . import voices as _v
     if _v.installed():
         checks.append(("voice", voice))
