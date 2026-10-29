@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.5.1](https://github.com/Knightsaway/ClipForge/compare/v0.5.0...v0.5.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* **app:** options after --then belong to the restarted copy ([881a305](https://github.com/Knightsaway/ClipForge/commit/881a3051cf1dfb428c12a798a54a1b2446527323))
+* **capture:** never leave FFmpeg running; webcam on/off switch; GPU priority works ([fe584dd](https://github.com/Knightsaway/ClipForge/commit/fe584dd2e7b14745bb771a655de671f47a2c6a50))
+* **editor:** renders with the loop ending failed on FFmpeg 7.1 ([21772d6](https://github.com/Knightsaway/ClipForge/commit/21772d6404a5442754b57a695608d895851ac8c4))
+* loop renders on FFmpeg 7.1, leftover FFmpeg processes, webcam switch, GPU priority, slow update restart ([cc4addf](https://github.com/Knightsaway/ClipForge/commit/cc4addf6d5807ac2a779416218d3201b9eeb9ec7))
+* **updater:** the app reopens within seconds after an update ([33be4a8](https://github.com/Knightsaway/ClipForge/commit/33be4a8fca866f1bc2fa7679b140acf511b32f82))
+
 ## [0.5.0](https://github.com/Knightsaway/ClipForge/compare/v0.4.0...v0.5.0) (2026-10-29)
 
 
