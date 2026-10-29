@@ -86,10 +86,17 @@ Set-Content -Path "$pkg\ClipForge-9.9.9-win64\VERSION" -Value "9.9.9" -NoNewline
 Compress-Archive -Path "$pkg\ClipForge-9.9.9-win64" -DestinationPath "$pkg\update.zip" -Force
 $report2 = Join-Path $env:TEMP "clipforge-selftest-after-update.txt"
 Remove-Item $report2 -ErrorAction SilentlyContinue
-$u = Start-Process -FilePath "$old\ClipForge.exe" -ArgumentList "--install-update", "`"$pkg\update.zip`"", "--then", "--selftest", "`"$report2`"" -PassThru
+# the real thing: the full app is running (window, recorder, hotkeys), installs the update, closes itself,
+# the helper swaps the files and starts the new version — it has to be quick, not minutes
+$cfg = Join-Path $env:APPDATA "ClipForge"
+New-Item -ItemType Directory -Force $cfg | Out-Null
+if (-not (Test-Path "$cfg\settings.json")) { Set-Content "$cfg\settings.json" '{"wizard_done": true}' -Encoding utf8 }
+Remove-Item "$cfg\update_result.txt", "$cfg\update.log" -ErrorAction SilentlyContinue
+$t0 = Get-Date
+$u = Start-Process -FilePath "$old\ClipForge.exe" -ArgumentList "--update-from", "`"$pkg\update.zip`"", "--then", "--selftest", "`"$report2`"" -PassThru
 $null = $u.Handle
-if (-not $u.WaitForExit(120000)) { $u.Kill(); Fail "Update test: --install-update hung" }
-if ($u.ExitCode -ne 0) { Fail "Update test: --install-update exited $($u.ExitCode)" }
+if (-not $u.WaitForExit(60000)) { $u.Kill(); Fail "Update test: the running ClipForge didn't close for the update within 60 s" }
+$closed = [math]::Round(((Get-Date) - $t0).TotalSeconds)
 $deadline = (Get-Date).AddSeconds(240)
 while ((Get-Date) -lt $deadline -and -not ((Test-Path $report2) -and ((Get-Content $report2 -Raw) -match '^(PASS|FAIL)'))) { Start-Sleep 2 }
 $after = if (Test-Path $report2) { Get-Content $report2 -Raw } else { "(the updated ClipForge never ran)" }
@@ -105,7 +112,9 @@ if ($newver -ne "9.9.9" -or $after -notmatch '^PASS') {
   $st = if (Test-Path (Join-Path $env:APPDATA "ClipForge\update_staging\ClipForge.exe")) { "staging present" } else { "no staging" }
   Fail ("Update test failed: VERSION after update = $newver, helper said: $res, $st, powershell: $ps`n--- update.log ---`n$ul`n--- clipforge.log ---`n$cll`n--- self-test after update ---`n" + $after)
 }
-Note "Update test: swapped to $newver while running, restarted, self-test PASS ($res)"
+$secs = [math]::Round(((Get-Date) - $t0).TotalSeconds)
+if ($secs -gt 120) { Fail "Update test: took $secs s from 'update' to the new version running (should be well under a minute)" }
+Note "Update test: full app updated itself to $newver - closed after $closed s, new version self-tested after $secs s ($res)"
 
 $mb = [math]::Round(((Get-ChildItem $out -Recurse -File | Measure-Object Length -Sum).Sum) / 1MB)
 Note "Built: $out\ClipForge.exe (version $ver, $mb MB unpacked)"

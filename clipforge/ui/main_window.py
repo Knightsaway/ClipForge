@@ -321,11 +321,14 @@ class MainWindow(QMainWindow):
         if is_frozen() and updater.pending_update():
             # the exe can't overwrite itself while running: a helper swaps the files once we've closed
             try:
-                updater.start_swap(os.getpid())
+                updater.start_swap(os.getpid(), getattr(self, "_relaunch_args", ()))
             except OSError as e:
                 self.toast.show_message(f"Couldn't start the update: {e}", theme.RED)
                 return
             self._quit_now()
+            # the helper can only swap the files once this process is really gone: don't let a lingering
+            # thread keep it alive
+            QTimer.singleShot(2500, lambda: os._exit(0))
             return
         exe = sys.executable
         if IS_WINDOWS and not is_frozen() and exe.lower().endswith("python.exe"):
@@ -339,6 +342,13 @@ class MainWindow(QMainWindow):
             self.toast.show_message(f"Couldn't restart: {e}", theme.RED)
             return
         self._quit_now()
+
+    def _apply_update_zip(self, path: str, relaunch_args=()):
+        """Install an update zip and restart into it — the same path as Settings → Upkeep."""
+        from .. import updater
+        updater.install_zip(path)
+        self._relaunch_args = list(relaunch_args)
+        self._restart_app()
 
     def _update_result(self):
         """After an exe update: say whether the files were swapped in."""
@@ -1092,10 +1102,10 @@ class MainWindow(QMainWindow):
 
     def _run_wizard(self):
         from .wizard import SetupWizard
-        before = (self.s.skin, self.s.hotkeys.save_clip, self.s.mic_device, self.s.webcam)
+        before = (self.s.skin, self.s.hotkeys.save_clip, self.s.mic_device, self.s.webcam, self.s.use_webcam)
         dlg = SetupWizard(self.s, self)
         dlg.exec()
-        after = (self.s.skin, self.s.hotkeys.save_clip, self.s.mic_device, self.s.webcam)
+        after = (self.s.skin, self.s.hotkeys.save_clip, self.s.mic_device, self.s.webcam, self.s.use_webcam)
         if after != before:
             QMessageBox.information(self, "ClipForge", "All set! ClipForge restarts once to use your choices.")
             self._restart_app()
