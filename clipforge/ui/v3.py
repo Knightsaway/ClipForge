@@ -505,7 +505,7 @@ class V4SettingsBox(QWidget):
         self.tik.setChecked(s.tiktok_versions)
         self.rz = QCheckBox("Facecam zooms in when I laugh / yell")
         self.rz.setChecked(s.reaction_zoom)
-        self.caster = QCheckBox("AI caster voice on Auto Shorts")
+        self.caster = QCheckBox("AI caster voice on Auto Shorts (experimental)")
         self.caster.setChecked(s.caster_auto)
         self.voice = QComboBox()
         self.voice.setEditable(True)

@@ -82,6 +82,12 @@ class PlayerPanel(QWidget):
         self.cam_video.setStyleSheet(f"background:black; border:2px solid {theme.ACCENT};")
         self.cam_player.setVideoOutput(self.cam_video)
         self.cam_video.setVisible(False)
+        # "Hear: All audio": the mic track (2nd audio track) played by a second, synced, picture-less player
+        self.mic_player = QMediaPlayer(self)
+        self.mic_audio = QAudioOutput(self)
+        self.mic_audio.setVolume(0.8)
+        self.mic_player.setAudioOutput(self.mic_audio)
+        self.has_mic = False
         self.live_frames = False        # the Studio's "Final look" view wants frames
         self._last_frame = {"game": 0.0, "cam": 0.0}
         try:
@@ -117,7 +123,8 @@ class PlayerPanel(QWidget):
         reset = QPushButton("Reset")
         reset.clicked.connect(self.reset_range)
         self.track = QComboBox()
-        self.track.addItems(["Hear: Game audio", "Hear: Mic"])
+        self.track.addItems(["Hear: All audio", "Hear: Game audio", "Hear: Mic"])
+        self.track.setToolTip("All audio = game + your mic together, like the exported video")
         self.track.currentIndexChanged.connect(self._track)
         vol = QSlider(Qt.Horizontal)
         vol.setRange(0, 100)
@@ -143,6 +150,9 @@ class PlayerPanel(QWidget):
         self.player.durationChanged.connect(self._dur)
         self.player.playbackStateChanged.connect(self._state)
         self.cam_player.mediaStatusChanged.connect(self._cam_status)
+        self.player.mediaStatusChanged.connect(self._main_status)
+        self.mic_player.mediaStatusChanged.connect(lambda st: (self._mic_track(), self._sync_mic(force=True))
+                                                   if st == QMediaPlayer.LoadedMedia else None)
         self.timeline.seek.connect(lambda s: self.player.setPosition(int(s * 1000)))
         self.timeline.rangeChanged.connect(self.rangeChanged)
 
@@ -166,11 +176,15 @@ class PlayerPanel(QWidget):
     def _vol(self, v):
         self.base_volume = v / 100
         self.audio.setVolume(self.base_volume * self._duck)
+        self.mic_audio.setVolume(self.base_volume * self._duck)
 
     def duck(self, factor: float):
-        """Turn the game down to `factor` (the AI caster is talking), 1.0 = back to normal."""
+        """Turn the clip's sound down to `factor` (the AI caster is talking), 1.0 = back to normal."""
+        if abs(factor - self._duck) < 1e-3:
+            return
         self._duck = factor
         self.audio.setVolume(self.base_volume * factor)
+        self.mic_audio.setVolume(self.base_volume * factor)
 
     def load(self, path: str, duration: float, t_in=0.0, t_out=0.0, markers=None, moments=None, autoplay=True,
              events=None, effects=None):
@@ -181,9 +195,11 @@ class PlayerPanel(QWidget):
         self.cam_btn.setVisible(False)
         self.cam_player.stop()
         self.cam_player.setSource(QUrl.fromLocalFile(path))
+        self.has_mic = False
+        self.mic_player.stop()
+        self.mic_player.setSource(QUrl.fromLocalFile(path))
         self.timeline.set_clip(duration, t_in, t_out, markers, moments, events, effects)
         self.player.setPosition(int(t_in * 1000))
-        self.track.setEnabled(True)
         if autoplay:
             self.player.play()
 
@@ -196,6 +212,60 @@ class PlayerPanel(QWidget):
         self.player.setSource(QUrl())
         self.cam_player.stop()
         self.cam_player.setSource(QUrl())
+        self.mic_player.stop()
+        self.mic_player.setSource(QUrl())
+
+    # ---- game / mic / both
+    def _main_status(self, status):
+        if status != QMediaPlayer.LoadedMedia:
+            return
+        try:
+            n = len(self.player.audioTracks())
+        except Exception:
+            n = 1
+        self.has_mic = n >= 2
+        self.track.setEnabled(self.has_mic)        # nothing to choose between without a mic track
+        self.track.setToolTip("All audio = game + your mic together, like the exported video" if self.has_mic
+                              else "This clip has no separate mic track")
+        self._track(self.track.currentIndex())
+
+    def _track(self, idx):
+        """0 = all audio (game on the main player + mic on the second one), 1 = game only, 2 = mic only."""
+        try:
+            if self.has_mic and len(self.player.audioTracks()) >= 2:
+                self.player.setActiveAudioTrack(1 if idx == 2 else 0)
+                self._mic_track()
+            else:
+                self.player.setActiveAudioTrack(0)
+        except Exception:
+            pass
+        self._sync_mic(force=True)
+
+    def _mic_track(self):
+        """The second player plays only the mic track (once it has opened the file)."""
+        try:
+            if self.mic_player.mediaStatus() in (QMediaPlayer.LoadedMedia, QMediaPlayer.BufferedMedia,
+                                                 QMediaPlayer.EndOfMedia) \
+                    and len(self.mic_player.audioTracks()) >= 2 and self.mic_player.activeAudioTrack() != 1:
+                self.mic_player.setActiveAudioTrack(1)
+        except Exception:
+            pass
+
+    def _sync_mic(self, force=False):
+        want = self.has_mic and self.track.currentIndex() == 0
+        if not want:
+            if self.mic_player.playbackState() == QMediaPlayer.PlayingState:
+                self.mic_player.pause()
+            return
+        main = self.player.position()
+        # the voice must stay tight on the picture (it's lip sync), but re-seeking too often crackles
+        if force or abs(self.mic_player.position() - main) > 90:
+            self.mic_player.setPosition(main)
+        playing = self.player.playbackState() == QMediaPlayer.PlayingState
+        if playing and self.mic_player.playbackState() != QMediaPlayer.PlayingState:
+            self.mic_player.play()
+        elif not playing and self.mic_player.playbackState() == QMediaPlayer.PlayingState:
+            self.mic_player.pause()
 
     # ---- webcam picture-in-picture
     def _cam_status(self, status):
@@ -236,6 +306,7 @@ class PlayerPanel(QWidget):
     def _state(self, st):
         self.play_btn.setText("❚❚" if st == QMediaPlayer.PlayingState else "▶")
         self._sync_cam(force=True)
+        self._sync_mic(force=True)
 
     def toggle(self):
         if self.player.playbackState() == QMediaPlayer.PlayingState:
@@ -250,6 +321,7 @@ class PlayerPanel(QWidget):
         self.timeline.set_pos(s)
         self.time_lbl.setText(f"{fmt_dur(s)} / {fmt_dur(self.timeline.duration)}")
         self._sync_cam()
+        self._sync_mic()
         if self.loop_range and self.player.playbackState() == QMediaPlayer.PlayingState \
                 and s > self.timeline.t_out + 0.05:
             self.player.setPosition(int(self.timeline.t_in * 1000))
@@ -259,14 +331,6 @@ class PlayerPanel(QWidget):
             out = self.timeline.t_out if self.timeline.t_out < self.timeline.duration - 0.01 else ms / 1000
             self.timeline.set_clip(ms / 1000, self.timeline.t_in, out, self.timeline.markers, self.timeline.moments,
                                    self.timeline.events, self.timeline.effects)
-
-    def _track(self, idx):
-        try:
-            tracks = self.player.audioTracks()
-            if idx < len(tracks):
-                self.player.setActiveAudioTrack(idx)
-        except Exception:
-            pass
 
     def set_in(self):
         self.timeline.t_in = min(self.timeline.pos_s, self.timeline.t_out - 0.5)
