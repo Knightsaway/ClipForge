@@ -327,7 +327,8 @@ class MaintenanceBox(QWidget):
         except Exception as e:
             QMessageBox.warning(self, "Update", f"The update failed: {e}")
             return
-        QMessageBox.information(self, "Update", f"ClipForge {ver} is installed. Restarting now.")
+        QMessageBox.information(self, "Update", f"ClipForge {ver} is ready. ClipForge closes now and opens again "
+                                "by itself in about 10 seconds — no need to start it yourself.")
         self.restart_fn()
 
     def check_online(self):

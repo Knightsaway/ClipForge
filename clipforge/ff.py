@@ -17,6 +17,99 @@ BELOW_NORMAL = 0x00004000
 ABOVE_NORMAL = 0x00008000
 
 
+_JOB = None
+
+
+def _job():
+    """A Windows job that kills every FFmpeg we started the moment ClipForge goes away — even after a crash
+    or a forced close. Without it, recorders kept running on their own: the webcam stayed on, it was
+    "busy" for the next session, and the update couldn't replace ffmpeg's files."""
+    global _JOB
+    if _JOB is None and IS_WINDOWS:
+        import ctypes
+        from ctypes import wintypes as wt
+
+        class BASIC(ctypes.Structure):
+            _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                        ("LimitFlags", wt.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                        ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wt.DWORD),
+                        ("Affinity", ctypes.c_size_t), ("PriorityClass", wt.DWORD), ("SchedulingClass", wt.DWORD)]
+
+        class IO(ctypes.Structure):
+            _fields_ = [(n, ctypes.c_uint64) for n in ("r", "w", "o", "rb", "wb", "ob")]
+
+        class EXT(ctypes.Structure):
+            _fields_ = [("Basic", BASIC), ("Io", IO), ("ProcessMemoryLimit", ctypes.c_size_t),
+                        ("JobMemoryLimit", ctypes.c_size_t), ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                        ("PeakJobMemoryUsed", ctypes.c_size_t)]
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateJobObjectW.restype = wt.HANDLE
+        k32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wt.LPCWSTR]
+        k32.SetInformationJobObject.argtypes = [wt.HANDLE, ctypes.c_int, ctypes.c_void_p, wt.DWORD]
+        job = k32.CreateJobObjectW(None, None)
+        info = EXT()
+        info.Basic.LimitFlags = 0x2000                     # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        if job and k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):
+            _JOB = job                                     # 9 = JobObjectExtendedLimitInformation
+        else:
+            _JOB = 0
+    return _JOB
+
+
+def adopt(proc) -> None:
+    """Tie a started FFmpeg to ClipForge's lifetime (see _job)."""
+    if not IS_WINDOWS or proc is None:
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes as wt
+        job = _job()
+        if job:
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            k32.AssignProcessToJobObject.argtypes = [wt.HANDLE, wt.HANDLE]
+            k32.AssignProcessToJobObject(job, int(proc._handle))
+    except Exception as e:
+        print("job:", e)
+
+
+def kill_strays() -> int:
+    """At startup: end FFmpeg processes left running by an earlier ClipForge (crash, forced close, older
+    version). Only ones started from ClipForge's own FFmpeg folder — never anyone else's FFmpeg."""
+    if not IS_WINDOWS:
+        return 0
+    import ctypes
+    from ctypes import wintypes as wt
+    ours = [str((r / "ffmpeg").resolve()).lower() for r in {app_root(), resource_root()}]
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    psapi = ctypes.WinDLL("psapi", use_last_error=True)
+    k32.OpenProcess.restype = wt.HANDLE
+    k32.OpenProcess.argtypes = [wt.DWORD, wt.BOOL, wt.DWORD]
+    k32.QueryFullProcessImageNameW.argtypes = [wt.HANDLE, wt.DWORD, wt.LPWSTR, ctypes.POINTER(wt.DWORD)]
+    k32.TerminateProcess.argtypes = [wt.HANDLE, wt.UINT]
+    k32.CloseHandle.argtypes = [wt.HANDLE]
+    pids = (wt.DWORD * 4096)()
+    got = wt.DWORD()
+    if not psapi.EnumProcesses(ctypes.byref(pids), ctypes.sizeof(pids), ctypes.byref(got)):
+        return 0
+    killed = 0
+    for pid in pids[: got.value // ctypes.sizeof(wt.DWORD)]:
+        h = k32.OpenProcess(0x1000 | 0x0001, False, pid)   # QUERY_LIMITED_INFORMATION | TERMINATE
+        if not h:
+            continue
+        try:
+            buf = ctypes.create_unicode_buffer(1024)
+            n = wt.DWORD(1024)
+            if k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(n)):
+                path = buf.value.lower()
+                name = path.rsplit("\\", 1)[-1]
+                if name in ("ffmpeg.exe", "ffprobe.exe") and any(path.startswith(o) for o in ours):
+                    if k32.TerminateProcess(h, 1):
+                        killed += 1
+        finally:
+            k32.CloseHandle(h)
+    return killed
+
+
 def popen_flags(priority: str = "normal") -> dict:
     if not IS_WINDOWS:
         return {}

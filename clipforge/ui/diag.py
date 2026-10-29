@@ -217,7 +217,7 @@ class DiagnosticsPage(QWidget):
             f"FFmpeg: {fver}",
             f"Capture: {st.pipeline or '(not started)'} | {self.s.resolution} {self.s.fps}fps {self.s.quality} "
             f"{self.s.codec}/{self.s.encoder} | monitor {self.s.monitor}",
-            f"Audio: desktop={self.s.desktop_audio} mic={self.s.mic_audio} webcam={self.s.webcam or 'none'}",
+            f"Audio: desktop={self.s.desktop_audio} mic={self.s.mic_audio} webcam={(self.s.webcam or 'none') if self.s.use_webcam else 'off (switched off)'}",
             "Sound sources: " + (" | ".join(
                 f"{sp.kind}: '{sp.sender.device_name or '?'}' level {sp.sender.level:.3f} "
                 f"heard sound={sp.sender.heard}" for sp in self.engine._sides if sp.sender) or "none running")

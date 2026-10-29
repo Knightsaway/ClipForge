@@ -21,7 +21,9 @@ def _log_exception(exc_type, exc, tb):
 
 
 def main():
-    if "--install-update" in sys.argv:    # CI / scripting: ClipForge.exe --install-update <zip> [--then <args…>]
+    # options after --then are for the NEXT start (after an update), not for this one
+    own = sys.argv[:sys.argv.index("--then")] if "--then" in sys.argv else sys.argv
+    if "--install-update" in own:    # CI / scripting: ClipForge.exe --install-update <zip> [--then <args…>]
         from . import updater
         i = sys.argv.index("--install-update")
         then = sys.argv[sys.argv.index("--then") + 1:] if "--then" in sys.argv else []
@@ -31,7 +33,7 @@ def main():
         except Exception:
             _log_exception(*sys.exc_info())
             sys.exit(1)
-    if "--install-voice" in sys.argv:     # CI / scripting: download the natural-voice add-on
+    if "--install-voice" in own:     # CI / scripting: download the natural-voice add-on
         from . import voices
         try:
             voices.install(lambda f, m: print(m, flush=True))
@@ -39,10 +41,10 @@ def main():
         except Exception:
             _log_exception(*sys.exc_info())
             sys.exit(1)
-    if "--selftest" in sys.argv:          # CI: does this build have everything it needs?
+    if "--selftest" in own:          # CI: does this build have everything it needs?
         from . import selftest
-        i = sys.argv.index("--selftest")
-        out = sys.argv[i + 1] if len(sys.argv) > i + 1 else str(app_data_dir() / "selftest.txt")
+        i = own.index("--selftest")
+        out = own[i + 1] if len(own) > i + 1 else str(app_data_dir() / "selftest.txt")
         try:
             code = selftest.run(Path(out))
         except BaseException:
@@ -68,12 +70,28 @@ def main():
                 pass
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ClipForge.App")
         # one copy only: two recorders would fight over the GPU encoder and hotkeys
+        try:                              # started by hand while an update is being put in place
+            from . import updater
+            if updater.updating():
+                ctypes.windll.user32.MessageBoxW(
+                    None, "ClipForge is installing an update and opens by itself in a few seconds.",
+                    "ClipForge", 0x40)
+                return
+        except Exception:
+            pass
         ctypes.windll.kernel32.CreateMutexW(None, False, "ClipForgeSingleInstance")
         if ctypes.windll.kernel32.GetLastError() == 183:
             ctypes.windll.user32.MessageBoxW(None, "ClipForge is already running (check the tray icon).",
                                              "ClipForge", 0x40)
             return
 
+    try:                                  # FFmpeg left behind by an earlier ClipForge (webcam light on, files locked)
+        from . import ff
+        n = ff.kill_strays()
+        if n:
+            print(f"ended {n} leftover FFmpeg process(es)")
+    except Exception as e:
+        print("strays:", e)
     from PySide6.QtWidgets import QApplication
     from .ui import theme
     from .config import SETTINGS_FILE, save_settings
@@ -92,7 +110,12 @@ def main():
     win = MainWindow(s, start_minimized="--minimized" in sys.argv)
     if not ("--minimized" in sys.argv or s.start_minimized):
         win.show()
-    if not s.wizard_done:
+    if "--update-from" in own:       # CI: the full in-app update path (window up -> update -> close -> swap)
+        from PySide6.QtCore import QTimer
+        i = sys.argv.index("--update-from")
+        then = sys.argv[sys.argv.index("--then") + 1:] if "--then" in sys.argv else []
+        QTimer.singleShot(4000, lambda: win._apply_update_zip(sys.argv[i + 1], then))
+    elif not s.wizard_done:
         from PySide6.QtCore import QTimer
         QTimer.singleShot(900, lambda: (win.show(), win._run_wizard()))
     from PySide6.QtCore import QTimer as _T

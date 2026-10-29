@@ -230,18 +230,28 @@ $dst = {_ps_quote(target)}
 $res = {_ps_quote(result_file)}
 $log = {_ps_quote(log)}
 function L($m) {{ Add-Content -Path $log -Value ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '  ' + $m) }}
+$lock = Join-Path (Split-Path $res) 'updating.lock'
+Set-Content -Path $lock -Value (Get-Date -Format o) -Encoding utf8
 L "update helper started: waiting for ClipForge (pid {int(pid)}) to close"
-try {{ Wait-Process -Id {int(pid)} -Timeout 90 -ErrorAction SilentlyContinue }} catch {{}}
+try {{ Wait-Process -Id {int(pid)} -Timeout 20 -ErrorAction SilentlyContinue }} catch {{}}
+if (Get-Process -Id {int(pid)} -ErrorAction SilentlyContinue) {{
+  L "ClipForge didn't close by itself in 20 s: closing it"
+  Stop-Process -Id {int(pid)} -Force -ErrorAction SilentlyContinue
+}}
+# anything else still running from the install folder (a copy started by hand, leftover FFmpeg) locks files
+$dstFull = [IO.Path]::GetFullPath($dst).TrimEnd([char]92) + [char]92
+Get-Process -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -and $_.Path.StartsWith($dstFull, 'OrdinalIgnoreCase') }} |
+  ForEach-Object {{ L ("closing " + $_.ProcessName + " (pid " + $_.Id + ")"); Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }}
 Start-Sleep -Milliseconds 700
 L "copying $src -> $dst"
 $failed = @()
 foreach ($d in '_internal', 'ffmpeg') {{
   if (Test-Path (Join-Path $src $d)) {{
-    robocopy (Join-Path $src $d) (Join-Path $dst $d) /MIR /R:30 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+    robocopy (Join-Path $src $d) (Join-Path $dst $d) /MIR /R:5 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
     if ($LASTEXITCODE -ge 8) {{ $failed += "$d ($LASTEXITCODE)" }}
   }}
 }}
-robocopy $src $dst /E /XD (Join-Path $src '_internal') (Join-Path $src 'ffmpeg') /R:30 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+robocopy $src $dst /E /XD (Join-Path $src '_internal') (Join-Path $src 'ffmpeg') /R:5 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -ge 8) {{ $failed += "files ($LASTEXITCODE)" }}
 $ver = ''
 if (Test-Path (Join-Path $src 'VERSION')) {{ $ver = (Get-Content (Join-Path $src 'VERSION') -Raw).Trim() }}
@@ -252,6 +262,7 @@ if ($failed.Count -eq 0) {{
 }} else {{
   Set-Content -Path $res -Value ("failed $ver " + ($failed -join ', ')) -Encoding utf8
 }}
+Remove-Item $lock -Force -ErrorAction SilentlyContinue
 L "starting ClipForge"
 $a = @({args})
 if ($a.Count -gt 0) {{ Start-Process -FilePath (Join-Path $dst 'ClipForge.exe') -ArgumentList $a -WorkingDirectory $dst }}
@@ -281,6 +292,16 @@ def start_swap(pid: int, relaunch_args=()) -> bool:
     except OSError:                       # the job doesn't allow breaking away: stay in it (still outlives us)
         subprocess.Popen(cmd, creationflags=flags & ~0x01000000, **io)
     return True
+
+
+def updating() -> bool:
+    """True while the update helper is swapping files (so a ClipForge started by hand waits instead)."""
+    f = staging_dir().parent / "updating.lock"
+    try:
+        import time
+        return f.exists() and time.time() - f.stat().st_mtime < 180
+    except OSError:
+        return False
 
 
 def take_result() -> str:

@@ -376,7 +376,7 @@ def _crossfade_cmd(a: Path, a_dur: float, pre: Path, b: Path, b_dur: float, x: f
     under A's last x seconds, so B itself still starts exactly where it sits on the timeline and the
     video keeps its length (= nothing on the timeline moves)."""
     off = max(0.0, a_dur - x)
-    f = (f"[1:v][2:v]concat=n=2:v=1:a=0,settb=AVTB[bv];[0:v]settb=AVTB[av];"
+    f = (f"[1:v][2:v]concat=n=2:v=1:a=0,fps={fps},settb=AVTB[bv];[0:v]fps={fps},settb=AVTB[av];"
          f"[av][bv]xfade=transition=fade:duration={x:.3f}:offset={off:.3f},format=yuv420p[v];"
          f"[1:a][2:a]concat=n=2:v=0:a=1[ba];"
          f"[0:a]afade=t=out:st={off:.3f}:d={x:.3f}[aa];"
@@ -552,7 +552,8 @@ def build_final(parts: list[Path], pieces: list[Piece], preset: Preset, opts: Re
     if opts.extra.get("loop") and footage > 2 and not opts.voiceover:
         # seamless loop: the last half second dissolves into the first frame, so the replay feels continuous
         X = 0.45
-        filters = [f"[0:v]split=2[vm][vh];[vh]trim=0:0.5,setpts=PTS-STARTPTS[vhead];"
+        # (both branches get an explicit frame rate: FFmpeg 7 refuses to blend when trim leaves it unknown)
+        filters = [f"[0:v]fps={fps},split=2[vm][vh];[vh]trim=0:0.5,setpts=PTS-STARTPTS,fps={fps}[vhead];"
                    f"[vm][vhead]xfade=transition=fade:duration={X}:offset={footage - X:.3f}[vc]",
                    # audio: fade the end out while the first half second fades in on top (a crossfade that
                    # doesn't stall the rest of the mix the way acrossfade does)
@@ -844,6 +845,7 @@ def _run_with_progress(cmd, total, cwd, progress, cancel) -> tuple[bool, str]:
     proc = subprocess.Popen(cmd, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             stdin=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
                             **ff.popen_flags("low"))
+    ff.adopt(proc)
     import threading
     err_lines: list[str] = []
     t = threading.Thread(target=lambda: err_lines.extend(proc.stderr), daemon=True)
