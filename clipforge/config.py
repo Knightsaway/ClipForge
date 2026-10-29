@@ -84,6 +84,8 @@ class Settings:
     session_inbox_count: int = 3
     no_repeats: bool = True            # automatic edits skip moments already used in a video
     auto_cut_boring: bool = True       # Create Montage cuts dead air for you (undo brings it back)
+    mic_moments: bool = True           # your laughing / yelling on the mic counts as a highlight
+    transition_style: str = "punchy"   # automatic edits: punchy (flash/zoom/whip/glitch), smooth (crossfades), mix
     auto_transitions: bool = True      # automatic edits put quick transitions between clips
     auto_clean_days: int = 0           # delete unused clips older than this (0 = never)
     disk_warn_gb: int = 20             # warn when the clips drive has less free space than this

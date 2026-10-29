@@ -51,8 +51,19 @@ def _ensure_scanned(c: Clip):
         print("kill scan:", e)
 
 
+def _sound_limit(c, lo: float, hi: float) -> float:
+    """Don't use a clip's last seconds if its sound is missing there (clips saved by older versions)."""
+    try:
+        from .analysis import sound_end
+        t = sound_end(c.path)
+    except Exception:
+        t = None
+    return min(hi, t - 0.05) if t is not None and t - lo > 1.0 else hi
+
+
 def plan_short(clips: list[Clip], target: float = 30.0, before: float = 4.5, after: float = 2.0,
-               progress=None, auto_fx: bool = True, exclude: list | None = None) -> list[Piece]:
+               progress=None, auto_fx: bool = True, exclude: list | None = None,
+               use_mic: bool = True) -> list[Piece]:
     """exclude: [(path, start, end)] moments already used in another video."""
     exclude = exclude or []
     from .vision import clusters
@@ -63,6 +74,7 @@ def plan_short(clips: list[Clip], target: float = 30.0, before: float = 4.5, aft
             progress(i / max(1, len(clips)), f"Scanning {c.display_title}…")
         lo = c.trim_in or 0.0
         hi = c.trim_out or c.duration or 0.0
+        hi = _sound_limit(c, lo, hi)
         if hi - lo < 1:
             continue
         _ensure_scanned(c)
@@ -78,15 +90,17 @@ def plan_short(clips: list[Clip], target: float = 30.0, before: float = 4.5, aft
             candidates.append((50.0, c, max(lo, hi - (before + after + 1)), hi, [hi - after - 0.5], False))
             continue
         # 3) your markers + loud moments
-        for t, score in find_moments(c.path, c.markers, max_moments=4):
+        for t, score in find_moments(c.path, c.markers, max_moments=5, mic=use_mic):
             if not (lo <= t <= hi) or any(a - 1 <= t <= b + 1 for a, b in taken):
                 continue
             pre, post = (before + 2, after + 1) if score >= 100 else (before, after)
             key = t - 0.4 if score >= 100 else t   # you press the marker just after the moment
+            if 90 <= score < 100:                  # you laughed / yelled: show what caused it, then the reaction
+                pre, post, key = before + 1.5, after + 2.5, t - 0.8
             candidates.append((score, c, max(lo, t - pre), min(hi, t + post), [key], False))
     if not candidates:  # nothing stood out: fall back to the end of each clip
         for c in clips:
-            hi = c.trim_out or c.duration
+            hi = _sound_limit(c, c.trim_in or 0.0, c.trim_out or c.duration or 0.0)
             if hi:
                 candidates.append((0.0, c, max(0.0, hi - 8), hi, [], False))
 

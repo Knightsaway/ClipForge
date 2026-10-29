@@ -409,7 +409,7 @@ class CaptureEngine:
                 return False
         def dur(g: Segment):
             return (g.wall_end - g.wall_start) if g.wall_end else None
-        parts = {"video": [], "sides": {}}
+        parts = {"video": [], "sides": {}, "start": start, "end": end, "partial": {}, "names": {}}
         for i, g in enumerate(video):
             dst = tmp / f"v_{i:06d}.ts"
             if put(g.path, dst):
@@ -421,9 +421,66 @@ class CaptureEngine:
                 dst = tmp / f"{kind}_{i:06d}.ts"
                 if put(g.path, dst):
                     files.append((dst, dur(g)))
+                    parts["names"].setdefault(kind, []).append(g.path.name)
+                    if g.wall_end is None:                       # still being written: fetch it again later
+                        parts["partial"].setdefault(kind, []).append(g.path.name)
             if files:
                 parts["sides"][kind] = (files, segs[0].wall_start)
         return parts
+
+    def _complete_sides(self, parts: dict, tmp: Path, wait: float = 6.0) -> None:
+        """The sound recorders run a second or more behind the video, so when a clip is saved their last
+        file isn't finished yet — the clip's sound would stop early and the gap would be filled with
+        silence (heard as the game AND your mic cutting out at the end of the clip). Wait until each
+        one has finished the file covering the clip's end, then take the late files again."""
+        end, start = parts.get("end"), parts.get("start")
+        kinds = [k for k in ("game", "mic") if k in parts.get("sides", {})]
+        if not end or not kinds:
+            return
+
+        def covered(kind):
+            return any(g.wall_end and g.wall_end >= end - 0.05
+                       for sr in self._series if sr.kind == kind for g in sr.segs)
+        with self._lock:
+            if all(covered(k) for k in kinds) and not parts.get("partial"):
+                return                                            # everything was on disk already
+        deadline = time.time() + wait
+        while time.time() < deadline:
+            with self._lock:
+                for sr in self._series:
+                    if sr.kind in kinds:
+                        sr.scan()
+                if all(covered(k) for k in kinds):
+                    break
+            time.sleep(0.25)
+        with self._lock:
+            for kind in kinds:
+                segs = self._pick_side(kind, start, end)
+                if not segs:
+                    continue
+                old_files, old_start = parts["sides"][kind]
+                names = parts["names"].get(kind, [])
+                done = dict(zip(names, old_files))                 # source name -> (copy, length)
+                late = set(parts["partial"].get(kind, []))
+                now_names = {g.path.name for g in segs}
+                # files that rotated out of the buffer while we waited: keep the copies we took
+                files = [done[n] for n in names if n not in now_names and n in done and n not in late
+                         and n < min(now_names)]
+                first_start = old_start if files else segs[0].wall_start
+                for i, g in enumerate(segs):
+                    d = (g.wall_end - g.wall_start) if g.wall_end else None
+                    if g.path.name in done and g.path.name not in late:
+                        files.append(done[g.path.name])           # was already complete: keep our copy
+                        continue
+                    dst = tmp / f"{kind}_late_{i:06d}.ts"
+                    try:
+                        shutil.copyfile(g.path, dst)
+                        files.append((dst, d))
+                    except OSError:                               # rotated out meanwhile: use what we had
+                        if g.path.name in done:
+                            files.append(done[g.path.name])
+                if files:
+                    parts["sides"][kind] = (files, first_start)
 
     # ------------------------------------------------------------------ public
     def start(self):
@@ -1141,6 +1198,10 @@ class CaptureEngine:
         try:
             if not parts or not parts.get("video"):
                 return
+            try:
+                self._complete_sides(parts, tmp)
+            except Exception as e:
+                self._log(f"waiting for the sound files: {e}")
             folder = self.s.library / safe_folder_name(game)
             folder.mkdir(parents=True, exist_ok=True)
             stamp = datetime.fromtimestamp(clip_start).strftime("%Y-%m-%d %H-%M-%S")

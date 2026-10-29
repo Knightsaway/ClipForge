@@ -31,6 +31,14 @@ def main():
         except Exception:
             _log_exception(*sys.exc_info())
             sys.exit(1)
+    if "--install-voice" in sys.argv:     # CI / scripting: download the natural-voice add-on
+        from . import voices
+        try:
+            voices.install(lambda f, m: print(m, flush=True))
+            sys.exit(0)
+        except Exception:
+            _log_exception(*sys.exc_info())
+            sys.exit(1)
     if "--selftest" in sys.argv:          # CI: does this build have everything it needs?
         from . import selftest
         i = sys.argv.index("--selftest")

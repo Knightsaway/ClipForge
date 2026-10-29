@@ -24,3 +24,11 @@ def test_every_cut_gets_a_transition_and_input_is_untouched():
 def test_caster_is_off_unless_switched_on():
     s = SimpleNamespace(caster_auto=False)
     assert autoedit.caster_for(_pieces(), s, "Test", {}) == []
+
+
+def test_transition_styles():
+    from clipforge.editor import add_auto_transitions
+    for style, allowed in (("smooth", {"crossfade"}), ("punchy", {"flash", "zoom", "whip", "glitch"})):
+        ps = [{"start": 0.0, "effects": []} for _ in range(6)]
+        add_auto_transitions(ps, seed=1, style=style)
+        assert {e["name"] for p in ps[1:] for e in p["effects"]} <= allowed
