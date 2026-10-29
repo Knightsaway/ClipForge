@@ -4,12 +4,12 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
 from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QFrame, QHBoxLayout, QLabel, QMainWindow,
                                QMenu, QMessageBox, QPushButton, QStackedWidget, QSystemTrayIcon, QVBoxLayout,
                                QWidget)
 
-from .. import editor
+from .. import editor, ff
 from ..autoshort import plan_short, suggest_hook
 from ..capture import CaptureEngine
 from ..config import IS_WINDOWS, Settings, save_settings
@@ -118,6 +118,11 @@ class MainWindow(QMainWindow):
         if getattr(s, "update_check", True):
             QTimer.singleShot(20000, self._check_update_online)
         QTimer.singleShot(60000, self._housekeeping)
+        # in the tray / while you play: let go of what only the window needs (see _lighten)
+        self._light = False
+        self._light_timer = QTimer(self)
+        self._light_timer.timeout.connect(self._memory_watch)
+        self._light_timer.start(15000)
         QTimer.singleShot(5000, lambda: self.lib.purge_deleted())
         self.setAcceptDrops(True)
 
@@ -410,6 +415,55 @@ class MainWindow(QMainWindow):
         self.showNormal()
         self.raise_()
         self.activateWindow()
+        self._wake_up()
+
+    def _memory_watch(self):
+        away = not self.isVisible() or self.isMinimized()
+        gaming = bool(self.engine.state.game) and not self.isActiveWindow()
+        if (away or gaming) and not self._light:
+            self._lighten()
+        elif not (away or gaming) and self._light:
+            self._wake_up()
+
+    def _lighten(self):
+        """While ClipForge sits in the tray or you're in a game: unload the video players (each keeps a decoder
+        and frames of the last clip), the caster's voice model and freed memory, and give that RAM back to
+        Windows. Nothing you're working on is lost; opening the window brings it back."""
+        self._light = True
+        try:
+            st = self.studio
+            if st.pieces and st.player.player.source().isValid():
+                self._studio_resume = (st._current, st.player.player.position())
+                st.player.player.pause()
+            st.player.unload()
+            if self.stack.currentIndex() != 1:
+                self.clip_page.player.unload()
+            from .. import voices
+            voices.unload()
+        except Exception as e:
+            print("lighten:", e)
+        ff.trim_memory()
+
+    def _wake_up(self):
+        if not self._light:
+            return
+        self._light = False
+        resume = getattr(self, "_studio_resume", None)
+        self._studio_resume = None
+        if resume and self.studio.pieces:
+            i, pos = resume
+            self.studio._autoplay_next = False
+            self.studio._refresh_list(min(i, len(self.studio.pieces) - 1))
+            QTimer.singleShot(300, lambda: self.studio.player.player.setPosition(pos))
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        QTimer.singleShot(0, self._wake_up)
+
+    def changeEvent(self, e):
+        super().changeEvent(e)
+        if e.type() == QEvent.WindowStateChange and not self.isMinimized():
+            QTimer.singleShot(0, self._wake_up)
 
     def closeEvent(self, e):
         if self._quitting:
@@ -417,6 +471,7 @@ class MainWindow(QMainWindow):
             return
         e.ignore()
         self.hide()
+        QTimer.singleShot(1000, self._memory_watch)
         self.tray.showMessage("ClipForge is still recording",
                               f"Press {self.s.hotkeys.save_clip} in-game to save a clip. Right-click the tray icon to quit.",
                               QSystemTrayIcon.Information, 3000)

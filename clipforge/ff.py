@@ -265,3 +265,26 @@ def list_webcams() -> list[str]:
         if m:
             names.append(m.group(1))
     return names
+
+
+def trim_memory() -> None:
+    """Hand memory ClipForge isn't using right now back to Windows (it comes back on demand). Used while
+    ClipForge sits in the tray or you're in a game, so the game gets the RAM."""
+    import gc
+    gc.collect()
+    if not IS_WINDOWS:
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes as wt
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        psapi = ctypes.WinDLL("psapi", use_last_error=True)
+        k32.GetCurrentProcess.restype = wt.HANDLE
+        k32.GetCurrentProcess.argtypes = []
+        psapi.EmptyWorkingSet.argtypes = [wt.HANDLE]
+        psapi.EmptyWorkingSet(k32.GetCurrentProcess())
+        # also release free C heap back to Windows
+        crt = ctypes.CDLL("ucrtbase")
+        crt._heapmin()
+    except Exception as e:
+        print("trim:", e)

@@ -282,7 +282,7 @@ def _raise_gpu_priority(proc) -> str:
 
 
 def dshow_args(name: str, res: str = "", fps: int = 0, vcodec: str = "") -> list[str]:
-    a = ["-f", "dshow", "-rtbufsize", "256M"]
+    a = ["-f", "dshow", "-rtbufsize", "64M"]   # ~10 s of backlog at 1080p; 256M let a stall eat RAM
     if res:
         a += ["-video_size", res]
     if fps:
@@ -521,6 +521,17 @@ class CaptureEngine:
     def stop(self):
         self._want_running = False
         self._kill()
+
+    def labelled_pids(self) -> list[tuple[str, int]]:
+        import os
+        out = [("ClipForge", os.getpid())]
+        if self._proc is not None and self._proc.poll() is None:
+            out.append(("video recorder", self._proc.pid))
+        names = {"cam": "webcam", "game": "game sound", "mic": "mic"}
+        for sp in self._sides:
+            if sp.proc is not None and sp.proc.poll() is None:
+                out.append((names.get(sp.kind, sp.kind), sp.proc.pid))
+        return out
 
     def pids(self) -> list[int]:
         """ClipForge itself plus its running FFmpeg recorders (for the performance meter)."""

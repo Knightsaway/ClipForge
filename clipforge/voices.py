@@ -187,3 +187,10 @@ def speak(text: str, out: Path, voice: str = DEFAULT, speed: float = 1.12) -> bo
     except Exception as e:
         print("kokoro:", e)
         return False
+
+
+def unload() -> None:
+    """Free the voice model (~300 MB with its runtime) — it's loaded again the next time the caster speaks."""
+    global _engine
+    with _lock:
+        _engine = None
