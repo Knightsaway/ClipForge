@@ -89,6 +89,7 @@ class MainWindow(QMainWindow):
         self.settings_page.maint.send_summary = lambda: self._weekly_summary(force=True)
         self.settings_page.maint.on_cleaned = lambda: self.library.refresh()
         QTimer.singleShot(3000, self.settings_page.maint.refresh)
+        QTimer.singleShot(1500, self._update_result)
         from .diag import DiagnosticsPage
         self.diag = DiagnosticsPage(self.engine, s)
         from .drafts_page import DraftsPage, QueueBridge
@@ -300,17 +301,40 @@ class MainWindow(QMainWindow):
         import sys
         if self.engine.state.recording:
             self.engine.stop_recording()
+        from .. import updater
+        from ..paths import app_root, is_frozen
+        if is_frozen() and updater.pending_update():
+            # the exe can't overwrite itself while running: a helper swaps the files once we've closed
+            try:
+                updater.start_swap(os.getpid())
+            except OSError as e:
+                self.toast.show_message(f"Couldn't start the update: {e}", theme.RED)
+                return
+            self._quit_now()
+            return
         exe = sys.executable
-        if IS_WINDOWS and exe.lower().endswith("python.exe"):
+        if IS_WINDOWS and not is_frozen() and exe.lower().endswith("python.exe"):
             exe = exe[:-10] + "pythonw.exe"
-        root = str(Path(__file__).resolve().parents[2])
+        args = [exe, "--after", str(os.getpid())] if is_frozen() else \
+            [exe, "-m", "clipforge", "--after", str(os.getpid())]
         try:
-            subprocess.Popen([exe, "-m", "clipforge", "--after", str(os.getpid())], cwd=root,
+            subprocess.Popen(args, cwd=str(app_root()),
                              **({"creationflags": 0x08000000} if IS_WINDOWS else {}))
         except OSError as e:
             self.toast.show_message(f"Couldn't restart: {e}", theme.RED)
             return
         self._quit_now()
+
+    def _update_result(self):
+        """After an exe update: say whether the files were swapped in."""
+        from .. import updater
+        res = updater.take_result()
+        if res.startswith("ok"):
+            from .. import __version__
+            self.toast.show_message(f"⬆ Updated to ClipForge {__version__}", theme.GREEN)
+        elif res:
+            QMessageBox.warning(self, "Update", "The update couldn't replace every file (another program may "
+                                "have had one open). Try Check now again, or download the installer.\n\n" + res)
 
     def _quit_now(self):
         self._quitting = True

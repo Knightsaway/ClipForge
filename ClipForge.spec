@@ -98,7 +98,8 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=bool(os.environ.get("CLIPFORGE_CONSOLE")),  # windowed; CLIPFORGE_CONSOLE=1 for a debug build
+    console=bool(os.environ.get("CLIPFORGE_CONSOLE")),
+    icon=str(ROOT / "assets" / "ClipForge.ico"),  # windowed; CLIPFORGE_CONSOLE=1 for a debug build
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

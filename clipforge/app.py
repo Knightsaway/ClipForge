@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import faulthandler
+import os
 import sys
 import traceback
 from datetime import datetime
@@ -30,6 +31,16 @@ def main():
             Path(out).write_text("FAIL\n" + traceback.format_exc(), encoding="utf-8")
             code = 1
         sys.exit(code)
+    if "--install-update" in sys.argv:    # CI / scripting: ClipForge.exe --install-update <zip> [--then <args…>]
+        from . import updater
+        i = sys.argv.index("--install-update")
+        then = sys.argv[sys.argv.index("--then") + 1:] if "--then" in sys.argv else []
+        try:
+            updater.install_zip(sys.argv[i + 1])
+            sys.exit(0 if updater.start_swap(os.getpid(), then) else 2)
+        except Exception:
+            _log_exception(*sys.exc_info())
+            sys.exit(1)
     sys.excepthook = _log_exception
     try:
         faulthandler.enable(open(app_data_dir() / "crash.log", "a"))

@@ -72,5 +72,32 @@ if ($p.ExitCode -ne 0) {
 }
 Note ("Self-test: " + ((($text -split "`n") | Where-Object { $_ -match '^(ok|PASS)' }) -join " | "))
 
+Note "==> Update test (old copy updates itself from a zip while running)"
+$old = Join-Path $env:TEMP "cf_update_old"
+$pkg = Join-Path $env:TEMP "cf_update_pkg"
+foreach ($d in $old, $pkg) { if (Test-Path $d) { Remove-Item -Recurse -Force $d } }
+Copy-Item -Recurse $out $old
+Set-Content -Path "$old\VERSION" -Value "0.0.1" -NoNewline
+New-Item -ItemType Directory -Force "$pkg\ClipForge-9.9.9-win64" | Out-Null
+Copy-Item -Recurse "$out\*" "$pkg\ClipForge-9.9.9-win64\"
+Set-Content -Path "$pkg\ClipForge-9.9.9-win64\VERSION" -Value "9.9.9" -NoNewline
+Compress-Archive -Path "$pkg\ClipForge-9.9.9-win64" -DestinationPath "$pkg\update.zip" -Force
+$report2 = Join-Path $env:TEMP "clipforge-selftest-after-update.txt"
+Remove-Item $report2 -ErrorAction SilentlyContinue
+$u = Start-Process -FilePath "$old\ClipForge.exe" -ArgumentList "--install-update", "`"$pkg\update.zip`"", "--then", "--selftest", "`"$report2`"" -PassThru
+$null = $u.Handle
+if (-not $u.WaitForExit(120000)) { $u.Kill(); Fail "Update test: --install-update hung" }
+if ($u.ExitCode -ne 0) { Fail "Update test: --install-update exited $($u.ExitCode)" }
+$deadline = (Get-Date).AddSeconds(240)
+while ((Get-Date) -lt $deadline -and -not ((Test-Path $report2) -and ((Get-Content $report2 -Raw) -match '^(PASS|FAIL)'))) { Start-Sleep 2 }
+$after = if (Test-Path $report2) { Get-Content $report2 -Raw } else { "(the updated ClipForge never ran)" }
+$newver = (Get-Content "$old\VERSION" -Raw).Trim()
+$result = Join-Path $env:APPDATA "ClipForge\update_result.txt"
+$res = if (Test-Path $result) { (Get-Content $result -Raw).Trim() } else { "(no result file)" }
+if ($newver -ne "9.9.9" -or $after -notmatch '^PASS') {
+  Fail ("Update test failed: VERSION after update = $newver, helper said: $res`n" + $after)
+}
+Note "Update test: swapped to $newver while running, restarted, self-test PASS ($res)"
+
 $mb = [math]::Round(((Get-ChildItem $out -Recurse -File | Measure-Object Length -Sum).Sum) / 1MB)
 Note "Built: $out\ClipForge.exe (version $ver, $mb MB unpacked)"
