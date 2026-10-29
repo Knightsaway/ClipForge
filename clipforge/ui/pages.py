@@ -50,6 +50,7 @@ class Jobs(QObject):
 
 # ====================================================================== library
 class LibraryPage(QWidget):
+    PAGE = 48
     makeToday = Signal()
     makeSeries = Signal(list)
     openClip = Signal(object)
@@ -102,13 +103,13 @@ class LibraryPage(QWidget):
         self.search.textChanged.connect(lambda: self._debounce.start(200))
         self.game_filter = QComboBox()
         self.game_filter.setFixedWidth(160)
-        self.game_filter.currentIndexChanged.connect(self.rebuild)
+        self.game_filter.currentIndexChanged.connect(self._refilter)
         self.kind_filter = QComboBox()
         self.kind_filter.addItems(["All", "★ Favorites", "⚑ Highlights, kills & markers", "Sessions"])
-        self.kind_filter.currentIndexChanged.connect(self.rebuild)
+        self.kind_filter.currentIndexChanged.connect(self._refilter)
         self.sort = QComboBox()
         self.sort.addItems(["Newest", "Oldest", "Longest"])
-        self.sort.currentIndexChanged.connect(self.rebuild)
+        self.sort.currentIndexChanged.connect(self._refilter)
         refresh = QPushButton("⟳")
         refresh.setToolTip("Rescan folders")
         refresh.clicked.connect(self.refresh)
@@ -133,8 +134,13 @@ class LibraryPage(QWidget):
 
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
-        self._debounce.timeout.connect(self.rebuild)
+        self._debounce.timeout.connect(self._refilter)
         self._cols = 0
+        # cards are built a page at a time (more appear as you scroll): each one holds a thumbnail picture,
+        # and building all of them made a big library cost hundreds of MB
+        self._limit = self.PAGE
+        self._shown_total = 0
+        self.scroll.verticalScrollBar().valueChanged.connect(self._maybe_more)
         self._resize_timer = QTimer(self)
         self._resize_timer.setSingleShot(True)
         self._resize_timer.timeout.connect(self._relayout_if_needed)
@@ -251,6 +257,22 @@ class LibraryPage(QWidget):
         if self._columns() != self._cols:
             self.rebuild()
 
+    def _refilter(self, *_):
+        self._limit = self.PAGE
+        self.rebuild()
+
+    def _maybe_more(self, value: int):
+        bar = self.scroll.verticalScrollBar()
+        if value >= bar.maximum() - 400 and len(self.cards) < self._shown_total:
+            self._show_more()
+
+    def _show_more(self):
+        bar = self.scroll.verticalScrollBar()
+        keep = bar.value()
+        self._limit += self.PAGE
+        self.rebuild()
+        bar.setValue(keep)
+
     def rebuild(self):
         while self.grid_lay.count():
             item = self.grid_lay.takeAt(0)
@@ -261,6 +283,9 @@ class LibraryPage(QWidget):
         self.cards.clear()
         clips = self._filtered()
         self.title.setText(f"ALL CLIPS ({len(clips)})")
+        self._shown_total = len(clips)
+        rest = max(0, len(clips) - self._limit)
+        clips = clips[:self._limit]
         self.empty.setVisible(not self.clips)
         self.scroll.setVisible(bool(self.clips))
         self._cols = cols = self._columns()
@@ -289,6 +314,10 @@ class LibraryPage(QWidget):
             grid.setColumnStretch(cols, 1)
             self.grid_lay.addLayout(grid)
             self.grid_lay.addSpacing(14)
+        if rest:
+            more = QPushButton(f"Show more ({rest} older clip{'s' if rest != 1 else ''})")
+            more.clicked.connect(self._show_more)
+            self.grid_lay.addWidget(more, 0, Qt.AlignHCenter)
         self.grid_lay.addStretch(1)
         self._update_sel_label()
 

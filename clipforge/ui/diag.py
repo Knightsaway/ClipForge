@@ -149,7 +149,8 @@ class DiagnosticsPage(QWidget):
             parts.append("not recording right now")
         if self.last_measure:
             parts.append(f"60 s test: {self.last_measure.text()}")
-        return "Performance: " + " | ".join(parts)
+        mem = perf.memory_breakdown(self.engine.labelled_pids())
+        return "Performance: " + " | ".join(parts) + (f"\nMemory now: {mem}" if mem else "")
 
     def _update_perf(self):
         if self.isVisible() or not self.perf_lbl.text():

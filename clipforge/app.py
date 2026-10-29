@@ -110,7 +110,10 @@ def main():
     win = MainWindow(s, start_minimized="--minimized" in sys.argv)
     if not ("--minimized" in sys.argv or s.start_minimized):
         win.show()
-    if "--update-from" in own:       # CI: the full in-app update path (window up -> update -> close -> swap)
+    if "--memreport" in own:             # CI: memory in real situations (see memreport.py)
+        from . import memreport
+        memreport.schedule(win, Path(own[own.index("--memreport") + 1]))
+    elif "--update-from" in own:       # CI: the full in-app update path (window up -> update -> close -> swap)
         from PySide6.QtCore import QTimer
         i = sys.argv.index("--update-from")
         then = sys.argv[sys.argv.index("--then") + 1:] if "--then" in sys.argv else []
