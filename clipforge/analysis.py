@@ -230,3 +230,46 @@ def music_score(path: str, start: float, end: float) -> float:
     beat = float(np.max(ac[lo:hi]) / (ac[0] + 1e-9)) if hi < len(ac) and ac[0] > 0 else 0.0
     score = 0.45 * tonal + 0.35 * min(1.0, sustain * 1.5) + 0.20 * min(1.0, max(0.0, beat) * 2)
     return round(float(min(1.0, score)), 3)
+
+
+def sound_end(path: str, tail: float = 30.0) -> float | None:
+    """Where a clip's sound stops for good, if it does before the picture ends.
+
+    Older ClipForge versions saved clips before the sound recorders had caught up, and filled the
+    missing end with exact digital silence (on the game track, the mic track or both). Cutting a
+    video from those last seconds sounds like everything suddenly going dead. Returns the time the
+    earliest track goes silent until the end (None = the sound runs to the end)."""
+    try:
+        from pathlib import Path
+        mtime = Path(path).stat().st_mtime
+    except OSError:
+        return None
+    return _sound_end(path, mtime, tail)
+
+
+@lru_cache(maxsize=512)
+def _sound_end(path: str, _mtime: float, tail: float) -> float | None:
+    dur = ff.duration(path)
+    n = ff.audio_stream_count(path)
+    if not dur or not n:
+        return None
+    base = max(0.0, dur - tail)
+    ends = []
+    for k in range(n):
+        r = ff.run([ff.ffmpeg_bin(), "-hide_banner", "-nostats", "-ss", f"{base:.3f}", "-i", path, "-map", f"0:a:{k}",
+                    "-af", "silencedetect=n=-100dB:d=0.3", "-f", "null", "-"], timeout=60)
+        start = None
+        span = dur - base
+        for line in r.stderr.splitlines():
+            if "silence_start:" in line:
+                start = float(line.rsplit("silence_start:", 1)[1].split()[0])
+            elif "silence_end:" in line:
+                t_end = float(line.rsplit("silence_end:", 1)[1].split()[0])
+                if t_end < span - 0.15:            # sound came back before the end: not a dead tail
+                    start = None                   # (FFmpeg also reports an "end" when the file ends)
+        if start is not None:
+            ends.append(base + start)
+    if not ends:
+        return None
+    t = min(ends)
+    return round(t, 2) if dur - t >= 0.3 else None
