@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/Knightsaway/ClipForge/compare/v0.3.0...v0.4.0) (2026-10-29)
+
+
+### Features
+
+* background auto edits, all-audio preview, real transitions, caster off ([#11](https://github.com/Knightsaway/ClipForge/issues/11)) ([e2e1064](https://github.com/Knightsaway/ClipForge/commit/e2e1064af89434122210779f193d9a53907996ab))
+
 ## [0.3.0](https://github.com/Knightsaway/ClipForge/compare/v0.2.2...v0.3.0) (2026-10-29)
 
 
