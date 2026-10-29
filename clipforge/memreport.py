@@ -51,4 +51,19 @@ def schedule(win, report: Path) -> None:
         report.write_text("\n".join(lines) + "\n", encoding="utf-8")
         os._exit(0)
 
-    QTimer.singleShot(20000, s1)          # let the library load and make its thumbnails
+    # wait until the library has loaded (its size stops changing for 10 s; at most 3 minutes)
+    state = {"n": -1, "since": 0.0, "t0": 0.0}
+
+    def wait_library():
+        import time
+        now = time.time()
+        state["t0"] = state["t0"] or now
+        n = len(clips())
+        if n != state["n"]:
+            state["n"], state["since"] = n, now
+        if (n and now - state["since"] >= 10) or now - state["t0"] > 180:
+            QTimer.singleShot(3000, s1)
+        else:
+            QTimer.singleShot(1000, wait_library)
+
+    QTimer.singleShot(5000, wait_library)
