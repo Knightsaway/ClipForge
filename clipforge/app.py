@@ -68,12 +68,28 @@ def main():
                 pass
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("ClipForge.App")
         # one copy only: two recorders would fight over the GPU encoder and hotkeys
+        try:                              # started by hand while an update is being put in place
+            from . import updater
+            if updater.updating():
+                ctypes.windll.user32.MessageBoxW(
+                    None, "ClipForge is installing an update and opens by itself in a few seconds.",
+                    "ClipForge", 0x40)
+                return
+        except Exception:
+            pass
         ctypes.windll.kernel32.CreateMutexW(None, False, "ClipForgeSingleInstance")
         if ctypes.windll.kernel32.GetLastError() == 183:
             ctypes.windll.user32.MessageBoxW(None, "ClipForge is already running (check the tray icon).",
                                              "ClipForge", 0x40)
             return
 
+    try:                                  # FFmpeg left behind by an earlier ClipForge (webcam light on, files locked)
+        from . import ff
+        n = ff.kill_strays()
+        if n:
+            print(f"ended {n} leftover FFmpeg process(es)")
+    except Exception as e:
+        print("strays:", e)
     from PySide6.QtWidgets import QApplication
     from .ui import theme
     from .config import SETTINGS_FILE, save_settings
@@ -92,7 +108,12 @@ def main():
     win = MainWindow(s, start_minimized="--minimized" in sys.argv)
     if not ("--minimized" in sys.argv or s.start_minimized):
         win.show()
-    if not s.wizard_done:
+    if "--update-from" in sys.argv:       # CI: the full in-app update path (window up -> update -> close -> swap)
+        from PySide6.QtCore import QTimer
+        i = sys.argv.index("--update-from")
+        then = sys.argv[sys.argv.index("--then") + 1:] if "--then" in sys.argv else []
+        QTimer.singleShot(4000, lambda: win._apply_update_zip(sys.argv[i + 1], then))
+    elif not s.wizard_done:
         from PySide6.QtCore import QTimer
         QTimer.singleShot(900, lambda: (win.show(), win._run_wizard()))
     from PySide6.QtCore import QTimer as _T

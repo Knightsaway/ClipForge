@@ -179,6 +179,10 @@ class SideProc(threading.Thread):
                 self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                                              stderr=subprocess.PIPE, text=True, encoding="utf-8",
                                              errors="replace", **ff.popen_flags("high"))
+                ff.adopt(self.proc)
+                if self.halt.is_set():        # told to stop while it was starting: don't leave it running
+                    self.proc.kill()
+                    return
             except OSError as e:
                 self.engine._log(f"{self.kind} recorder couldn't start: {e}")
                 return
@@ -227,8 +231,20 @@ def _enable_privilege(name: str = "SeIncreaseBasePriorityPrivilege") -> bool:
 
     class TP(ctypes.Structure):
         _fields_ = [("Count", wt.DWORD), ("Luid", LUID), ("Attr", wt.DWORD)]
-    adv, k32 = ctypes.windll.advapi32, ctypes.windll.kernel32
+    # every call is typed: GetCurrentProcess() returns (HANDLE)-1, which as a plain Python int overflowed the
+    # default C int argument ("argument 1: OverflowError: int too long to convert") — so priority never rose
+    adv = ctypes.WinDLL("advapi32", use_last_error=True)
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
     k32.GetCurrentProcess.restype = wt.HANDLE
+    k32.GetCurrentProcess.argtypes = []
+    k32.CloseHandle.argtypes = [wt.HANDLE]
+    adv.OpenProcessToken.argtypes = [wt.HANDLE, wt.DWORD, ctypes.POINTER(wt.HANDLE)]
+    adv.OpenProcessToken.restype = wt.BOOL
+    adv.LookupPrivilegeValueW.argtypes = [wt.LPCWSTR, wt.LPCWSTR, ctypes.POINTER(LUID)]
+    adv.LookupPrivilegeValueW.restype = wt.BOOL
+    adv.AdjustTokenPrivileges.argtypes = [wt.HANDLE, wt.BOOL, ctypes.POINTER(TP), wt.DWORD, ctypes.c_void_p,
+                                          ctypes.c_void_p]
+    adv.AdjustTokenPrivileges.restype = wt.BOOL
     tok = wt.HANDLE()
     if not adv.OpenProcessToken(k32.GetCurrentProcess(), 0x0020 | 0x0008, ctypes.byref(tok)):
         return False
@@ -236,8 +252,9 @@ def _enable_privilege(name: str = "SeIncreaseBasePriorityPrivilege") -> bool:
     ok = adv.LookupPrivilegeValueW(None, name, ctypes.byref(luid))
     if ok:
         tp = TP(1, luid, 0x2)  # SE_PRIVILEGE_ENABLED
+        ctypes.set_last_error(0)
         ok = adv.AdjustTokenPrivileges(tok, False, ctypes.byref(tp), 0, None, None) and \
-            ctypes.GetLastError() == 0
+            ctypes.get_last_error() == 0
     k32.CloseHandle(tok)
     return bool(ok)
 
@@ -249,7 +266,7 @@ def _raise_gpu_priority(proc) -> str:
     try:
         import ctypes
         priv = _enable_privilege()
-        fn = ctypes.windll.gdi32.D3DKMTSetProcessSchedulingPriorityClass
+        fn = ctypes.WinDLL("gdi32").D3DKMTSetProcessSchedulingPriorityClass
         fn.argtypes = [ctypes.c_void_p, ctypes.c_int]
         fn.restype = ctypes.c_long
         handle = int(proc._handle)
@@ -686,7 +703,7 @@ class CaptureEngine:
                 "-bufsize", f"{maxrate*2}M", "-pix_fmt", "yuv420p"] + keyf
 
     def _webcam_ok(self) -> bool:
-        if not self.s.webcam:
+        if not self.s.webcam or not getattr(self.s, "use_webcam", True):
             return False
         if TEST_MODE:
             return True
@@ -805,6 +822,7 @@ class CaptureEngine:
             self._proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                                           stderr=subprocess.PIPE, text=True, encoding="utf-8",
                                           errors="replace", **ff.popen_flags("high"))
+            ff.adopt(self._proc)
             self._series.append(series)
             threading.Thread(target=self._apply_gpu_priority, args=(self._proc,), daemon=True).start()
             threading.Thread(target=self._read_stderr, args=(self._proc,), daemon=True).start()
@@ -820,7 +838,7 @@ class CaptureEngine:
         self._stop_sides()
         folder = self._session_dir
         kinds = []
-        if self.s.webcam:
+        if self.s.webcam and getattr(self.s, "use_webcam", True):
             kinds.append("cam")
         if self.s.desktop_audio:
             kinds.append("game")

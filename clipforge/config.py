@@ -56,6 +56,7 @@ class Settings:
     mic_device: str = ""               # empty = default microphone
     audio_offset_ms: int = 0
     webcam: str = ""                   # DirectShow camera name; empty = no facecam
+    use_webcam: bool = True            # off = ClipForge never opens the camera (the choice above is kept)
     webcam_res: str = "1280x720"
     webcam_fps: int = 30
     only_while_gaming: bool = True     # pause the buffer when no fullscreen game is focused

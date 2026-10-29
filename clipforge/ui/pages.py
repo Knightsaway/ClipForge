@@ -2808,6 +2808,13 @@ class SettingsPage(QWidget):
         self.cam_test.setToolTip("Opens the camera for a moment and shows a picture from it")
         self.cam_test.clicked.connect(self._test_cam)
         cam_row.addWidget(self.cam_test)
+        self.use_cam = QCheckBox("Record my webcam")
+        self.use_cam.setToolTip("Off = ClipForge never opens your camera (its light stays off). Your camera choice\n"
+                                "below is remembered for when you switch it back on.")
+        self.use_cam.setChecked(getattr(s, "use_webcam", True))
+        self.use_cam.toggled.connect(lambda on: (self.cam.setEnabled(on), self.cam_res.setEnabled(on),
+                                                 self.cam_test.setEnabled(on)))
+        f.addRow(self.use_cam)
         f.addRow("Webcam (facecam)", cam_row)
         f.addRow("Webcam size", self.cam_res)
         self.cam_pic = QLabel("")
@@ -3229,6 +3236,7 @@ class SettingsPage(QWidget):
         s.extra_folders = [x.strip() for x in self.extra.text().split(";") if x.strip()]
         s.start_minimized = self.minimized.isChecked()
         s.webcam = self.cam.currentData() or ""
+        s.use_webcam = self.use_cam.isChecked()
         s.webcam_res = self.cam_res.currentText()
         s.auto_fx = self.auto_fx.isChecked()
         s.auto_gifs = self.auto_gifs.isChecked()
