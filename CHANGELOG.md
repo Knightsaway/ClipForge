@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/Knightsaway/ClipForge/compare/v0.2.2...v0.3.0) (2026-10-29)
+
+
+### Features
+
+* self-updating exe, installer, performance meter and bug reports ([#9](https://github.com/Knightsaway/ClipForge/issues/9)) ([52f7b4f](https://github.com/Knightsaway/ClipForge/commit/52f7b4fb1691782470b6962918e331a45d0593b1))
+
 ## [0.2.2](https://github.com/Knightsaway/ClipForge/compare/v0.2.1...v0.2.2) (2026-10-28)
 
 
