@@ -40,6 +40,10 @@ jobs:
         shell: pwsh
         run: ./scripts/build_windows.ps1
 
+      - name: Build installer (Inno Setup)
+        shell: pwsh
+        run: ./scripts/build_installer.ps1
+
       - name: Zip win64 artifact
         shell: pwsh
         run: |
@@ -50,8 +54,8 @@ jobs:
           New-Item -ItemType Directory -Force "dist_release\$name" | Out-Null
           Copy-Item -Recurse "dist\ClipForge\*" "dist_release\$name\"
           Compress-Archive -Path "dist_release\$name" -DestinationPath "dist_release\$name.zip" -Force
-          Get-FileHash -Algorithm SHA256 "dist_release\$name.zip" |
-            ForEach-Object { "$($_.Hash.ToLower())  $name.zip" } |
+          Get-FileHash -Algorithm SHA256 "dist_release\$name.zip", "dist_release\ClipForge-*-setup.exe" |
+            ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } |
             Set-Content -Encoding ascii "dist_release\SHA256SUMS"
           Get-Content "dist_release\SHA256SUMS"
           "ASSET_VER=$ver" | Out-File -Append -FilePath $env:GITHUB_ENV -Encoding utf8
@@ -65,6 +69,7 @@ jobs:
           TAG="${{ needs.release-please.outputs.tag_name }}"
           gh release upload "$TAG" \
             dist_release/*.zip \
+            dist_release/*-setup.exe \
             dist_release/SHA256SUMS \
             --clobber
           NOTES=$(gh release view "$TAG" --json body -q .body)
@@ -72,7 +77,9 @@ jobs:
             echo "$NOTES"
             echo ""
             echo "## Downloads"
-            echo "- \`ClipForge-${ASSET_VER}-win64.zip\` — standalone app (ClipForge.exe + vendored FFmpeg)."
+            echo "- **\`ClipForge-${ASSET_VER}-setup.exe\`** — installer (recommended): Start menu + desktop shortcut, uninstall from Windows settings, no admin needed."
+            echo "- \`ClipForge-${ASSET_VER}-win64.zip\` — portable app (ClipForge.exe + vendored FFmpeg); unzip anywhere you can write to."
+            echo "- Windows may say \"Windows protected your PC\" because ClipForge isn't code-signed yet: click **More info → Run anyway**. ([code signing policy](https://github.com/Knightsaway/ClipForge/blob/main/docs/CODE_SIGNING.md) · [privacy](https://github.com/Knightsaway/ClipForge/blob/main/docs/PRIVACY.md))"
             echo "  See THIRD_PARTY_NOTICES.md inside for GPL/LGPL notices."
           } > /tmp/notes.md
           gh release edit "$TAG" --notes-file /tmp/notes.md

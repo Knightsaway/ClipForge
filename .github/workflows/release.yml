@@ -62,6 +62,10 @@ print(next(l.split('=',1)[1].strip().split()[0].strip().strip(chr(34).chr(39)) f
         shell: pwsh
         run: ./scripts/build_windows.ps1
 
+      - name: Build installer (Inno Setup)
+        shell: pwsh
+        run: ./scripts/build_installer.ps1
+
       - name: Zip win64 artifact
         shell: pwsh
         run: |
@@ -70,8 +74,8 @@ print(next(l.split('=',1)[1].strip().split()[0].strip().strip(chr(34).chr(39)) f
           New-Item -ItemType Directory -Force "dist_release\$name" | Out-Null
           Copy-Item -Recurse "dist\ClipForge\*" "dist_release\$name\"
           Compress-Archive -Path "dist_release\$name" -DestinationPath "dist_release\$name.zip" -Force
-          Get-FileHash -Algorithm SHA256 "dist_release\$name.zip" |
-            ForEach-Object { "$($_.Hash.ToLower())  $name.zip" } |
+          Get-FileHash -Algorithm SHA256 "dist_release\$name.zip", "dist_release\ClipForge-*-setup.exe" |
+            ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } |
             Set-Content -Encoding ascii "dist_release\SHA256SUMS"
 
       - uses: actions/upload-artifact@v4
@@ -79,6 +83,7 @@ print(next(l.split('=',1)[1].strip().split()[0].strip().strip(chr(34).chr(39)) f
           name: win64-bundle
           path: |
             dist_release/*.zip
+            dist_release/*-setup.exe
             dist_release/SHA256SUMS
 
   publish:
@@ -105,5 +110,6 @@ print(next(l.split('=',1)[1].strip().split()[0].strip().strip(chr(34).chr(39)) f
           gh release upload "$TAG" \
             --repo "${{ github.repository }}" \
             dist_release/*.zip \
+            dist_release/*-setup.exe \
             dist_release/SHA256SUMS \
             --clobber

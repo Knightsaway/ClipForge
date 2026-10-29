@@ -176,3 +176,45 @@ def test_install_refuses_mismatched_payload(tmp_path, monkeypatch):
     with pytest.raises(ValueError, match="win64"):
         updater.install_zip(src_zip, target)
     assert updater.install_zip(exe_zip, target) == "9.9.9"
+
+
+def test_exe_update_is_staged_not_copied(tmp_path, monkeypatch):
+    """A running ClipForge.exe is locked, so exe updates wait in staging for the swap helper."""
+    stage = tmp_path / "staging"
+    monkeypatch.setattr(updater, "staging_dir", lambda: stage)
+    monkeypatch.setattr(updater, "is_frozen", lambda: True)
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "ClipForge.exe").write_text("old")
+    monkeypatch.setattr(updater, "app_root", lambda: app)
+    z = _zip(tmp_path / "w.zip", {"ClipForge-9.9.9-win64/ClipForge.exe": "new",
+                                  "ClipForge-9.9.9-win64/VERSION": "9.9.9",
+                                  "ClipForge-9.9.9-win64/_internal/x.dll": "dll"})
+    assert updater.install_zip(z, defer=True, target=app) == "9.9.9"
+    assert (app / "ClipForge.exe").read_text() == "old"          # untouched while running
+    assert updater.pending_update() == stage
+    assert (stage / "_internal" / "x.dll").exists()
+
+
+def test_swap_script_quotes_paths_and_waits(tmp_path):
+    stage, app = Path("C:/Users/O'Neil/stage"), Path("C:/Apps/Clip Forge")
+    txt = updater.swap_script(stage, app, 4242, ["--selftest", "C:/t/r.txt"], result_file=tmp_path / "r.txt")
+    assert "Wait-Process -Id 4242" in txt
+    assert "'" + str(stage).replace("'", "''") + "'" in txt      # PowerShell single-quote escaping
+    assert "'" + str(app) + "'" in txt
+    assert "/MIR" in txt and "'--selftest', 'C:/t/r.txt'" in txt
+
+
+def test_take_result_reads_once(tmp_path, monkeypatch):
+    monkeypatch.setattr(updater, "staging_dir", lambda: tmp_path / "update_staging")
+    (tmp_path / "update_result.txt").write_text("ok 9.9.9", encoding="utf-8")
+    assert updater.take_result() == "ok 9.9.9"
+    assert updater.take_result() == ""
+
+
+def test_unwritable_install_folder_is_refused(tmp_path, monkeypatch):
+    monkeypatch.setattr(updater, "writable", lambda p: False)
+    z = _zip(tmp_path / "w.zip", {"ClipForge-9.9.9-win64/ClipForge.exe": "x",
+                                  "ClipForge-9.9.9-win64/VERSION": "9.9.9"})
+    with pytest.raises(ValueError, match="installer"):
+        updater.install_zip(z, target=tmp_path, defer=True)

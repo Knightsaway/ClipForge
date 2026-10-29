@@ -448,6 +448,15 @@ class CaptureEngine:
         self._want_running = False
         self._kill()
 
+    def pids(self) -> list[int]:
+        """ClipForge itself plus its running FFmpeg recorders (for the performance meter)."""
+        import os
+        out = [os.getpid()]
+        for p in [self._proc] + [sp.proc for sp in self._sides]:
+            if p is not None and p.poll() is None:
+                out.append(p.pid)
+        return out
+
     def shutdown(self):
         if self.state.recording:
             self.stop_recording()

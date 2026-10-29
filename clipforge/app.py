@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import faulthandler
+import os
 import sys
 import traceback
 from datetime import datetime
@@ -20,6 +21,16 @@ def _log_exception(exc_type, exc, tb):
 
 
 def main():
+    if "--install-update" in sys.argv:    # CI / scripting: ClipForge.exe --install-update <zip> [--then <args…>]
+        from . import updater
+        i = sys.argv.index("--install-update")
+        then = sys.argv[sys.argv.index("--then") + 1:] if "--then" in sys.argv else []
+        try:
+            updater.install_zip(sys.argv[i + 1])
+            sys.exit(0 if updater.start_swap(os.getpid(), then) else 2)
+        except Exception:
+            _log_exception(*sys.exc_info())
+            sys.exit(1)
     if "--selftest" in sys.argv:          # CI: does this build have everything it needs?
         from . import selftest
         i = sys.argv.index("--selftest")
@@ -31,6 +42,7 @@ def main():
             code = 1
         sys.exit(code)
     sys.excepthook = _log_exception
+    from . import perf                    # starts the startup clock
     try:
         faulthandler.enable(open(app_data_dir() / "crash.log", "a"))
     except Exception:
@@ -75,6 +87,8 @@ def main():
     if not s.wizard_done:
         from PySide6.QtCore import QTimer
         QTimer.singleShot(900, lambda: (win.show(), win._run_wizard()))
+    from PySide6.QtCore import QTimer as _T
+    _T.singleShot(0, perf.mark_started)   # first event-loop turn = window is up
     sys.exit(app.exec())
 
 

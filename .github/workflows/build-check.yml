@@ -10,6 +10,9 @@ on:
       - "ClipForge.spec"
       - "requirements.lock"
       - "clipforge/selftest.py"
+      - "clipforge/updater.py"
+      - "installer/**"
+      - "assets/**"
       - ".github/workflows/**"
   workflow_dispatch:
 
@@ -27,6 +30,10 @@ jobs:
       - name: Build onedir + vendor FFmpeg
         shell: pwsh
         run: ./scripts/build_windows.ps1
+
+      - name: Build and test the installer
+        shell: pwsh
+        run: ./scripts/build_installer.ps1
 
       - name: Self-test from source (for comparison)
         if: always()

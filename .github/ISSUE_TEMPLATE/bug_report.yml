@@ -1,0 +1,32 @@
+name: Bug report
+description: Something in ClipForge doesn't work. (Tip — ClipForge → Diagnostics → 🐞 Report a bug fills this in for you.)
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead? Screenshots help.
+      placeholder: "I pressed Alt+F10 in Valorant and no clip was saved…"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: ClipForge version
+      description: Settings → Upkeep shows it.
+      placeholder: "0.3.0"
+    validations:
+      required: true
+  - type: input
+    id: pc
+    attributes:
+      label: PC
+      description: Windows version, GPU, and the game if it's game-specific.
+      placeholder: "Windows 11 24H2 | RTX 4070 | Fortnite"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Log
+      description: The end of ClipForge's log (Diagnostics → Open log folder). Check it for anything private first.
+      render: text

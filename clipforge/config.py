@@ -87,6 +87,7 @@ class Settings:
     auto_transitions: bool = True      # automatic edits put quick transitions between clips
     auto_clean_days: int = 0           # delete unused clips older than this (0 = never)
     disk_warn_gb: int = 20             # warn when the clips drive has less free space than this
+    update_check: bool = True          # look for a new release when ClipForge starts
     update_url: str = "github:Knightsaway/ClipForge"   # where new versions come from (GitHub repo or a version.json)
     ntfy_topic: str = ""               # phone push notifications via the free ntfy app
     wizard_done: bool = False

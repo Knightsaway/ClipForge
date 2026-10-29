@@ -129,12 +129,43 @@ def require_https(url: str, *, allow_insecure: bool = False) -> None:
         raise ValueError("Update URLs must use HTTPS.")
 
 
-def install_zip(zip_path: str | Path, target: Path | None = None, expected_sha256: str = "") -> str:
-    """Copies the new version over this one. Returns the installed version."""
+def staging_dir() -> Path:
+    """Where a downloaded exe update waits until ClipForge has closed (see start_swap)."""
+    from .config import app_data_dir
+    return app_data_dir() / "update_staging"
+
+
+def pending_update() -> Path | None:
+    d = staging_dir()
+    return d if (d / "ClipForge.exe").exists() else None
+
+
+def writable(folder: Path) -> bool:
+    try:
+        probe = Path(folder) / f".clipforge_write_test_{os.getpid()}"
+        probe.write_bytes(b"")
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def install_zip(zip_path: str | Path, target: Path | None = None, expected_sha256: str = "",
+                defer: bool | None = None) -> str:
+    """Installs the new version. Returns the installed version.
+
+    Source installs (and explicit targets) are copied over in place. A running ClipForge.exe and its
+    DLLs are locked by Windows, so for the exe the files are staged instead (defer) and
+    start_swap() puts them in place once ClipForge has closed."""
     if expected_sha256:
         verify_sha256(zip_path, expected_sha256)
     ver, prefix = zip_version(zip_path)
+    if defer is None:
+        defer = is_frozen() and target is None
     target = Path(target) if target is not None else app_root()
+    if defer and not writable(target):
+        raise ValueError(f"ClipForge can't update itself in {target} (Windows protects that folder). "
+                         "Download the installer from the Releases page and install again.")
     tmp = Path(tempfile.mkdtemp(prefix="clipforge_update_"))
     try:
         with zipfile.ZipFile(zip_path) as z:
@@ -157,11 +188,16 @@ def install_zip(zip_path: str | Path, target: Path | None = None, expected_sha25
         source_payload = (tmp / "clipforge" / "__init__.py").exists()
         if not frozen_payload and not source_payload:
             raise ValueError("The update looks incomplete.")
-        if is_frozen() and not frozen_payload:
+        if (is_frozen() or defer) and not frozen_payload:
             raise ValueError("That's a source zip — this ClipForge.exe install needs the ClipForge-*-win64.zip.")
         if not is_frozen() and not source_payload:
             raise ValueError("That's the ClipForge.exe (win64) zip — this install runs from source and needs a "
                              "source zip (the repo's 'Download ZIP' or the release's source code zip).")
+        if defer:                                # exe: stage now, swap after ClipForge closes
+            stage = staging_dir()
+            shutil.rmtree(stage, ignore_errors=True)
+            shutil.move(str(tmp), str(stage))
+            return ver
         for f in tmp.rglob("*"):
             if f.is_file():
                 dst = target / f.relative_to(tmp)
@@ -176,6 +212,86 @@ def install_zip(zip_path: str | Path, target: Path | None = None, expected_sha25
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
     return ver
+
+
+def _ps_quote(v) -> str:
+    return "'" + str(v).replace("'", "''") + "'"
+
+
+def swap_script(stage: Path, target: Path, pid: int, relaunch_args=(), result_file: Path | None = None) -> str:
+    """PowerShell that waits for ClipForge (pid) to exit, mirrors the staged files into the install
+    folder (robocopy retries while files are still locked), records the result and starts ClipForge."""
+    result_file = result_file or (staging_dir().parent / "update_result.txt")
+    log = result_file.with_name("update.log")
+    args = ", ".join(_ps_quote(a) for a in relaunch_args)
+    return f"""$ErrorActionPreference = 'Continue'
+$src = {_ps_quote(stage)}
+$dst = {_ps_quote(target)}
+$res = {_ps_quote(result_file)}
+$log = {_ps_quote(log)}
+function L($m) {{ Add-Content -Path $log -Value ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '  ' + $m) }}
+L "update helper started: waiting for ClipForge (pid {int(pid)}) to close"
+try {{ Wait-Process -Id {int(pid)} -Timeout 90 -ErrorAction SilentlyContinue }} catch {{}}
+Start-Sleep -Milliseconds 700
+L "copying $src -> $dst"
+$failed = @()
+foreach ($d in '_internal', 'ffmpeg') {{
+  if (Test-Path (Join-Path $src $d)) {{
+    robocopy (Join-Path $src $d) (Join-Path $dst $d) /MIR /R:30 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+    if ($LASTEXITCODE -ge 8) {{ $failed += "$d ($LASTEXITCODE)" }}
+  }}
+}}
+robocopy $src $dst /E /XD (Join-Path $src '_internal') (Join-Path $src 'ffmpeg') /R:30 /W:1 /NFL /NDL /NJH /NJS /NP | Out-Null
+if ($LASTEXITCODE -ge 8) {{ $failed += "files ($LASTEXITCODE)" }}
+$ver = ''
+if (Test-Path (Join-Path $src 'VERSION')) {{ $ver = (Get-Content (Join-Path $src 'VERSION') -Raw).Trim() }}
+L ("copy done; problems: " + ($failed -join ', '))
+if ($failed.Count -eq 0) {{
+  Remove-Item $src -Recurse -Force -ErrorAction SilentlyContinue
+  Set-Content -Path $res -Value "ok $ver" -Encoding utf8
+}} else {{
+  Set-Content -Path $res -Value ("failed $ver " + ($failed -join ', ')) -Encoding utf8
+}}
+L "starting ClipForge"
+$a = @({args})
+if ($a.Count -gt 0) {{ Start-Process -FilePath (Join-Path $dst 'ClipForge.exe') -ArgumentList $a -WorkingDirectory $dst }}
+else {{ Start-Process -FilePath (Join-Path $dst 'ClipForge.exe') -WorkingDirectory $dst }}
+"""
+
+
+def start_swap(pid: int, relaunch_args=()) -> bool:
+    """Starts the hidden helper that installs the staged update once ClipForge (pid) has closed.
+    The caller must then quit without starting a new copy — the helper restarts ClipForge."""
+    stage = pending_update()
+    if stage is None:
+        return False
+    script = Path(tempfile.gettempdir()) / f"clipforge_update_{pid}.ps1"
+    script.write_text(swap_script(stage, app_root(), pid, relaunch_args), encoding="utf-8-sig")
+    # its own process group, away from ClipForge's job, no console window; it must outlive ClipForge
+    flags = (0x00000200 | 0x01000000 | 0x08000000) if os.name == "nt" else 0
+    ps = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    exe = str(ps) if ps.exists() else "powershell"
+    with open(staging_dir().parent / "update.log", "a", encoding="utf-8") as f:
+        f.write(f"starting helper {exe} {script}\n")
+    cmd = [exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden",
+           "-File", str(script)]
+    io = dict(close_fds=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        subprocess.Popen(cmd, creationflags=flags, **io)
+    except OSError:                       # the job doesn't allow breaking away: stay in it (still outlives us)
+        subprocess.Popen(cmd, creationflags=flags & ~0x01000000, **io)
+    return True
+
+
+def take_result() -> str:
+    """'ok 0.3.0' / 'failed …' after a swap (read once at startup), else ''."""
+    f = staging_dir().parent / "update_result.txt"
+    try:
+        txt = f.read_text(encoding="utf-8-sig").strip()
+        f.unlink()
+        return txt
+    except OSError:
+        return ""
 
 
 def sync_requirements(target: Path | None = None) -> None:

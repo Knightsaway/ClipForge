@@ -1,0 +1,11 @@
+name: Idea / feature request
+description: Something ClipForge should do (better).
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+      description: What are you trying to do, and how would it ideally work?
+    validations:
+      required: true
