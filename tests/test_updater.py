@@ -197,11 +197,11 @@ def test_exe_update_is_staged_not_copied(tmp_path, monkeypatch):
 
 
 def test_swap_script_quotes_paths_and_waits(tmp_path):
-    txt = updater.swap_script(Path("C:/Users/O'Neil/stage"), Path("C:/Apps/Clip Forge"), 4242,
-                              ["--selftest", "C:/t/r.txt"], result_file=tmp_path / "r.txt")
+    stage, app = Path("C:/Users/O'Neil/stage"), Path("C:/Apps/Clip Forge")
+    txt = updater.swap_script(stage, app, 4242, ["--selftest", "C:/t/r.txt"], result_file=tmp_path / "r.txt")
     assert "Wait-Process -Id 4242" in txt
-    assert "'C:/Users/O''Neil/stage'" in txt                     # PowerShell single-quote escaping
-    assert "'C:/Apps/Clip Forge'" in txt
+    assert "'" + str(stage).replace("'", "''") + "'" in txt      # PowerShell single-quote escaping
+    assert "'" + str(app) + "'" in txt
     assert "/MIR" in txt and "'--selftest', 'C:/t/r.txt'" in txt
 
 

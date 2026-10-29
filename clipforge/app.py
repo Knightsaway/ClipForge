@@ -21,16 +21,6 @@ def _log_exception(exc_type, exc, tb):
 
 
 def main():
-    if "--selftest" in sys.argv:          # CI: does this build have everything it needs?
-        from . import selftest
-        i = sys.argv.index("--selftest")
-        out = sys.argv[i + 1] if len(sys.argv) > i + 1 else str(app_data_dir() / "selftest.txt")
-        try:
-            code = selftest.run(Path(out))
-        except BaseException:
-            Path(out).write_text("FAIL\n" + traceback.format_exc(), encoding="utf-8")
-            code = 1
-        sys.exit(code)
     if "--install-update" in sys.argv:    # CI / scripting: ClipForge.exe --install-update <zip> [--then <args…>]
         from . import updater
         i = sys.argv.index("--install-update")
@@ -41,7 +31,18 @@ def main():
         except Exception:
             _log_exception(*sys.exc_info())
             sys.exit(1)
+    if "--selftest" in sys.argv:          # CI: does this build have everything it needs?
+        from . import selftest
+        i = sys.argv.index("--selftest")
+        out = sys.argv[i + 1] if len(sys.argv) > i + 1 else str(app_data_dir() / "selftest.txt")
+        try:
+            code = selftest.run(Path(out))
+        except BaseException:
+            Path(out).write_text("FAIL\n" + traceback.format_exc(), encoding="utf-8")
+            code = 1
+        sys.exit(code)
     sys.excepthook = _log_exception
+    from . import perf                    # starts the startup clock
     try:
         faulthandler.enable(open(app_data_dir() / "crash.log", "a"))
     except Exception:
@@ -86,6 +87,8 @@ def main():
     if not s.wizard_done:
         from PySide6.QtCore import QTimer
         QTimer.singleShot(900, lambda: (win.show(), win._run_wizard()))
+    from PySide6.QtCore import QTimer as _T
+    _T.singleShot(0, perf.mark_started)   # first event-loop turn = window is up
     sys.exit(app.exec())
 
 

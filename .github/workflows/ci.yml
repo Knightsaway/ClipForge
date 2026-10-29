@@ -58,4 +58,9 @@ jobs:
         run: |
           python -m compileall -q clipforge
           python -c "import clipforge; print(clipforge.__version__)"
-          pytest -q
+          pytest -q --tb=short -rf 2>&1 | Tee-Object pytest.txt
+          if ($LASTEXITCODE -ne 0) {
+            $f = (Get-Content pytest.txt | Select-String "^(FAILED|ERROR|E  )" | Select-Object -First 20) -join "%0A"
+            Write-Host "::error title=pytest on Windows::$f"
+            exit 1
+          }
