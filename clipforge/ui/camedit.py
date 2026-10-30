@@ -515,7 +515,7 @@ class CamEditor(QWidget):
         size_row.addWidget(QLabel("Size"))
         self.size = QSlider(Qt.Horizontal)
         self.size.setRange(10, 100)
-        self.size.setValue(int(self.canvas.box.get("w", 0.4) * 100))
+        self.size.setValue(round(self.canvas.box.get("w", 0.4) * 100))
         self.size.valueChanged.connect(self._size)
         size_row.addWidget(self.size, 1)
         left.addLayout(size_row)
@@ -771,7 +771,7 @@ class CamEditor(QWidget):
         if self.canvas.selected == "hook" and not text:
             self.canvas.selected = "cam"
         self.hook_size.blockSignals(True)
-        self.hook_size.setValue(int(scale * 100))
+        self.hook_size.setValue(round(scale * 100))
         self.hook_size.blockSignals(False)
         self._selected(self.canvas.selected)
         self.canvas.update()
@@ -872,7 +872,7 @@ class CamEditor(QWidget):
                 w.blockSignals(True)
             self.item_text.setText(str(it.get("text", "")))
             self.item_style.setCurrentIndex(max(0, self.item_style.findData(it.get("style", "white"))))
-            self.item_size.setValue(int(float(it.get("scale", 1.0)) * 100))
+            self.item_size.setValue(round(float(it.get("scale", 1.0)) * 100))
             self.item_pop.setChecked(bool(it.get("pop", True)))
             self.item_dur.setValue(float(it.get("dur", 2.0)))
             for w in (self.item_text, self.item_style, self.item_size, self.item_pop, self.item_dur):
@@ -883,7 +883,7 @@ class CamEditor(QWidget):
         if is_gif:
             g = self.canvas.gifs[item]
             self.gif_name.setText("🎞 " + Path(g.get("path", "")).stem[:40])
-            for w, val in ((self.gif_size, int((g.get("box") or {}).get("w", 0.4) * 100)),
+            for w, val in ((self.gif_size, round((g.get("box") or {}).get("w", 0.4) * 100)),
                            (self.gif_dur, float(g.get("dur", 3.0)))):
                 w.blockSignals(True)
                 w.setValue(val)
@@ -957,7 +957,7 @@ class CamEditor(QWidget):
 
     def _sync_controls(self):
         box = self.canvas.box
-        for w, val in ((self.size, int(box.get("w", 0.4) * 100)),):
+        for w, val in ((self.size, round(box.get("w", 0.4) * 100)),):
             w.blockSignals(True)
             w.setValue(val)
             w.blockSignals(False)
