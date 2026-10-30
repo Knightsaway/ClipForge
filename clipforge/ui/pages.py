@@ -3101,10 +3101,13 @@ class SettingsPage(QWidget):
     def _autostart_enabled(self) -> bool:
         if not IS_WINDOWS:
             return False
-        r = subprocess.run(["schtasks", "/Query", "/TN", "ClipForge"], capture_output=True,
-                           creationflags=0x08000000)
-        if r.returncode == 0:
-            return True
+        try:
+            r = subprocess.run(["schtasks", "/Query", "/TN", "ClipForge"], capture_output=True,
+                               creationflags=0x08000000, timeout=15)
+            if r.returncode == 0:
+                return True
+        except subprocess.TimeoutExpired:
+            pass
         import winreg
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, self.RUN_KEY) as k:
@@ -3126,7 +3129,11 @@ class SettingsPage(QWidget):
             exe = exe[:-10] + "pythonw.exe"
         nowin = 0x08000000
         # remove both kinds first, then add the right one
-        subprocess.run(["schtasks", "/Delete", "/TN", "ClipForge", "/F"], capture_output=True, creationflags=nowin)
+        try:
+            subprocess.run(["schtasks", "/Delete", "/TN", "ClipForge", "/F"], capture_output=True, creationflags=nowin,
+                           timeout=15)
+        except subprocess.TimeoutExpired:
+            pass
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, self.RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
             try:
                 winreg.DeleteValue(k, "ClipForge")
@@ -3142,10 +3149,14 @@ class SettingsPage(QWidget):
                        else f'"{exe}" -m clipforge --minimized')
             if is_admin():
                 # Logon task with highest privileges → elevated without a UAC prompt → GPU priority
-                r = subprocess.run(["schtasks", "/Create", "/TN", "ClipForge", "/SC", "ONLOGON", "/RL", "HIGHEST",
-                                    "/TR", cmd, "/F"], capture_output=True, creationflags=nowin)
-                if r.returncode == 0:
-                    return
+                try:
+                    r = subprocess.run(["schtasks", "/Create", "/TN", "ClipForge", "/SC", "ONLOGON", "/RL",
+                                        "HIGHEST", "/TR", cmd, "/F"], capture_output=True, creationflags=nowin,
+                                       timeout=15)
+                    if r.returncode == 0:
+                        return
+                except subprocess.TimeoutExpired:
+                    pass                    # fall back to the Run key below
             winreg.SetValueEx(k, "ClipForge", 0, winreg.REG_SZ, cmd)
 
     TABS = [("🎥  Recording", ["Capture", "Audio & webcam", "Hotkeys", "Highlights & auto", "Library",

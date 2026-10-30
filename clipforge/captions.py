@@ -201,9 +201,12 @@ def transcribe_pieces(pieces: list[Piece], work: Path) -> list[tuple[float, floa
         wav = Path(work) / f"cap_{i}.wav"
         n = ff.audio_stream_count(p.path)
         src = ["-map", "0:a:1"] if n >= 2 else ["-map", "0:a:0"]
-        subprocess.run([ff.ffmpeg_bin(), "-v", "error", "-y", "-ss", f"{p.start}", "-t", f"{p.dur}",
-                        "-i", p.path] + src + ["-ac", "1", "-ar", "16000", str(wav)],
-                       capture_output=True, **ff.popen_flags("low"))
+        try:
+            subprocess.run([ff.ffmpeg_bin(), "-v", "error", "-y", "-ss", f"{p.start}", "-t", f"{p.dur}",
+                            "-i", p.path] + src + ["-ac", "1", "-ar", "16000", str(wav)],
+                           capture_output=True, timeout=120, **ff.popen_flags("low"))
+        except subprocess.TimeoutExpired:  # a stuck read must not hang the render: this piece gets no captions
+            wav.unlink(missing_ok=True)
         if wav.exists() and abs(p.speed - 1) < 1e-3:  # skip slow-mo bits: speech there is unintelligible
             words += [(offset + s_, offset + e, t) for s_, e, t in transcribe(wav)]
         offset += p.out_dur
