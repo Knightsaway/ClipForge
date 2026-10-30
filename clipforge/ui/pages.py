@@ -1216,13 +1216,19 @@ class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, EffectsMix
         self.status.setText("👥 Lining up the two angles (audio sync)…")
 
         def work():
-            off, conf = align(mine.path, mine.created, other.path, other.created)
+            try:
+                off, conf = align(mine.path, mine.created, other.path, other.created)
+            except Exception as e:           # e.g. FFmpeg missing or timed out reading one of them
+                off, conf = None, str(e)
             self.alignReady.emit((pc, other, mode, off, conf))
         threading.Thread(target=work, daemon=True).start()
 
     def _aligned(self, res):
         pc, other, mode, off, conf = res
         if pc not in self.pieces:
+            return
+        if off is None:
+            self.status.setText(f"👥 Couldn't line up the two angles: {conf[:120]}")
             return
         sync = f"synced by audio ({conf:.0%})" if conf >= 0.25 else "synced by clock (audio match was weak)"
         if mode == "split":
@@ -1790,8 +1796,11 @@ class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, EffectsMix
         def work():
             import tempfile
             from .. import commentator
-            wav, dur = commentator.speak_line(text.strip(), Path(tempfile.gettempdir()) / "ClipForge" / "caster",
-                                              self.s.caster_voice)
+            try:
+                wav, dur = commentator.speak_line(text.strip(), Path(tempfile.gettempdir()) / "ClipForge" / "caster",
+                                                  self.s.caster_voice)
+            except Exception:                # shown as "couldn't say that line" instead of waiting forever
+                wav, dur = "", 0.0
             self.lineReady.emit({"k": k, "text": text.strip(), "wav": wav, "dur": dur})
         threading.Thread(target=work, daemon=True).start()
 

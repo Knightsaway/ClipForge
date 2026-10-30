@@ -646,3 +646,22 @@ def test_beat_sync_needs_music(studio):
         box.assert_not_called()
         studio._beat_sync()
     box.assert_called_once()
+
+
+def test_reword_reports_a_voice_engine_crash(app, studio):
+    studio.load_draft(_draft(studio, caster=[dict(x) for x in LINES]))
+    with mock.patch("PySide6.QtWidgets.QInputDialog.getText", return_value=("Clean!", True)), \
+            mock.patch("clipforge.commentator.speak_line", side_effect=OSError("disk full")):
+        studio._caster_reword(1)
+        _wait(app, lambda: "couldn't say" in studio.status.text(), secs=2.0)
+    assert studio.caster_lines[1]["text"] == "Unreal."
+
+
+def test_friends_angle_reports_a_failed_sync(app, studio):
+    studio.load_draft(_draft(studio))
+    pc = studio.pieces[0]
+    friend = studio.pieces[1]["clip"]
+    with mock.patch("clipforge.squad.align", side_effect=FileNotFoundError("ffmpeg not found")):
+        studio._align(pc, friend, "split")
+        _wait(app, lambda: "Couldn't line up" in studio.status.text(), secs=2.0)
+    assert "ffmpeg not found" in studio.status.text() and "alt" not in pc
