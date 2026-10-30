@@ -16,7 +16,6 @@ How it stays light and stable:
 from __future__ import annotations
 
 import os
-import re
 import shutil
 import socket
 import subprocess
@@ -1165,8 +1164,9 @@ class CaptureEngine:
                         try:
                             from .config import save_settings
                             save_settings(self.s)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            from .config import log_note
+                            log_note(f"couldn't save the capture method for {game}: {e}")
                         nice = {"window": "game window capture", "desktop": "full screen capture"}[other]
                         self.emit("toast", f"Capture was choppy — switching to {nice} for {game}")
                         self.restart()

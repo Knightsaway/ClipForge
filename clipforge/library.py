@@ -7,7 +7,6 @@ import json
 import shutil
 import os
 import threading
-import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -173,6 +172,12 @@ class Library:
                 for k, v in data.items():
                     if hasattr(clip, k) and k != "path":
                         setattr(clip, k, v)
+            except ValueError as e:
+                # damaged: keep it, or the next clip.save() would overwrite it (only in our own library:
+                # squad / extra folders may be shared or synced, so files there are never renamed)
+                if side.resolve().is_relative_to(self.root.resolve()):
+                    from .config import keep_damaged
+                    keep_damaged(side, str(e))
             except Exception:
                 pass
         if clip.has_cam < 0 and clip.duration:

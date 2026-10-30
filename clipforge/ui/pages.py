@@ -15,14 +15,14 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDoubleS
                                QScrollArea, QSpinBox, QSplitter, QVBoxLayout, QWidget)
 
 from .. import editor, ff
-from ..autoshort import plan_short, suggest_hook
+from ..autoshort import suggest_hook
 from ..config import IS_WINDOWS, Settings, save_settings
-from ..editor import PRESETS, Piece, RenderOptions
+from ..editor import PRESETS, Piece
 from ..highlights import find_moments
 from ..library import Clip, Library
 from . import theme
 from .player import PlayerPanel
-from .widgets import ClipCard, HotkeyEdit, Toggle, day_label, fmt_dur
+from .widgets import ClipCard, HotkeyEdit, day_label, fmt_dur
 
 
 def show_in_folder(path: str):
@@ -784,7 +784,6 @@ class StudioPage(QWidget):
         big.clicked.connect(self.pick_clips)
         ev.addWidget(big)
         ev.addStretch(2)
-        from PySide6.QtWidgets import QStackedWidget
         self.list_stack = QStackedWidget()
         self.list_stack.addWidget(self.empty)
         self.list_stack.addWidget(self.list)
@@ -3101,10 +3100,13 @@ class SettingsPage(QWidget):
     def _autostart_enabled(self) -> bool:
         if not IS_WINDOWS:
             return False
-        r = subprocess.run(["schtasks", "/Query", "/TN", "ClipForge"], capture_output=True,
-                           creationflags=0x08000000)
-        if r.returncode == 0:
-            return True
+        try:
+            r = subprocess.run(["schtasks", "/Query", "/TN", "ClipForge"], capture_output=True,
+                               creationflags=0x08000000, timeout=15)
+            if r.returncode == 0:
+                return True
+        except subprocess.TimeoutExpired:
+            pass
         import winreg
         try:
             with winreg.OpenKey(winreg.HKEY_CURRENT_USER, self.RUN_KEY) as k:
@@ -3126,7 +3128,11 @@ class SettingsPage(QWidget):
             exe = exe[:-10] + "pythonw.exe"
         nowin = 0x08000000
         # remove both kinds first, then add the right one
-        subprocess.run(["schtasks", "/Delete", "/TN", "ClipForge", "/F"], capture_output=True, creationflags=nowin)
+        try:
+            subprocess.run(["schtasks", "/Delete", "/TN", "ClipForge", "/F"], capture_output=True, creationflags=nowin,
+                           timeout=15)
+        except subprocess.TimeoutExpired:
+            pass
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, self.RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
             try:
                 winreg.DeleteValue(k, "ClipForge")
@@ -3142,10 +3148,14 @@ class SettingsPage(QWidget):
                        else f'"{exe}" -m clipforge --minimized')
             if is_admin():
                 # Logon task with highest privileges → elevated without a UAC prompt → GPU priority
-                r = subprocess.run(["schtasks", "/Create", "/TN", "ClipForge", "/SC", "ONLOGON", "/RL", "HIGHEST",
-                                    "/TR", cmd, "/F"], capture_output=True, creationflags=nowin)
-                if r.returncode == 0:
-                    return
+                try:
+                    r = subprocess.run(["schtasks", "/Create", "/TN", "ClipForge", "/SC", "ONLOGON", "/RL",
+                                        "HIGHEST", "/TR", cmd, "/F"], capture_output=True, creationflags=nowin,
+                                       timeout=15)
+                    if r.returncode == 0:
+                        return
+                except subprocess.TimeoutExpired:
+                    pass                    # fall back to the Run key below
             winreg.SetValueEx(k, "ClipForge", 0, winreg.REG_SZ, cmd)
 
     TABS = [("🎥  Recording", ["Capture", "Audio & webcam", "Hotkeys", "Highlights & auto", "Library",

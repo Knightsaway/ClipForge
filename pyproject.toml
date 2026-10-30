@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "clipforge"
-version = "0.1.0"
+version = "0.5.2"  # x-release-please-version
 description = "Local replay buffer, editor, and Auto Short for Windows"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -36,5 +36,9 @@ line-length = 120
 target-version = "py310"
 
 [tool.ruff.lint]
-# Keep CI green on an existing codebase: catch real bugs, not style churn.
-select = ["E9", "F63", "F7", "F82"]
+# Catch real bugs, not style churn: syntax errors, pyflakes (unused / undefined names) and bugbear.
+select = ["E9", "F", "B"]
+ignore = [
+  "B007",  # unused loop variable: style only
+  "B905",  # zip() without strict=: style only, and strict= would change behaviour
+]

@@ -5,7 +5,7 @@ import time
 from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtMultimediaWidgets import QVideoWidget
-from PySide6.QtWidgets import (QComboBox, QGridLayout, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout,
+from PySide6.QtWidgets import (QComboBox, QHBoxLayout, QLabel, QPushButton, QSlider, QVBoxLayout,
                                QWidget)
 
 from .widgets import Timeline, fmt_dur

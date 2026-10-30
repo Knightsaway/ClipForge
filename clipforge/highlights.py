@@ -18,7 +18,7 @@ def loudness_curve(path: str) -> np.ndarray:
     if n == 0:
         return np.zeros(0)
     if n >= 2:
-        fc = ["-filter_complex", f"[0:a:0][0:a:1]amix=inputs=2:normalize=0[a]", "-map", "[a]"]
+        fc = ["-filter_complex", "[0:a:0][0:a:1]amix=inputs=2:normalize=0[a]", "-map", "[a]"]
     else:
         fc = ["-map", "0:a:0"]
     cmd = [ff.ffmpeg_bin(), "-hide_banner", "-v", "error", "-i", path] + fc + \

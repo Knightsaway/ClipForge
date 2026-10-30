@@ -521,9 +521,9 @@ def day2_ratio(items) -> float:
             continue
         live = datetime.fromisoformat(it.publish_at).timestamp() if it.publish_at else it.added
 
-        def views_at(t):
+        def views_at(t):  # only called within this iteration
             best = None
-            for ts, v in it.history:
+            for ts, v in it.history:  # noqa: B023
                 if abs(ts - t) < 4 * 3600 and (best is None or abs(ts - t) < abs(best[0] - t)):
                     best = (ts, v)
             return best[1] if best else None

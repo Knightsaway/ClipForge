@@ -53,6 +53,9 @@ def all_drafts() -> list[dict]:
         for f in DIR.glob("*.json"):
             try:
                 out.append(json.loads(f.read_text(encoding="utf-8")))
+            except ValueError as e:      # damaged: keep it aside (and say so) instead of hiding it silently
+                from .config import keep_damaged
+                keep_damaged(f, str(e))
             except Exception:
                 continue
     return sorted(out, key=lambda d: d.get("updated", 0), reverse=True)
@@ -247,7 +250,6 @@ def edit_from(pieces: list[dict], s, game: str, hook: str, style: dict | None = 
 
 def build_session_drafts(clips, s, n: int = 3, progress=None) -> list[dict]:
     """After a play session: the best few Shorts, fully auto-edited, saved as inbox drafts (nothing renders)."""
-    import tempfile
 
     from . import used
     from .autoshort import plan_short, suggest_hook
