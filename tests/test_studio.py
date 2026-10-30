@@ -665,3 +665,194 @@ def test_friends_angle_reports_a_failed_sync(app, studio):
         studio._align(pc, friend, "split")
         _wait(app, lambda: "Couldn't line up" in studio.status.text(), secs=2.0)
     assert "ffmpeg not found" in studio.status.text() and "alt" not in pc
+
+
+# ----------------------------------------------------------------------------- the clip list
+
+def _rows(studio):
+    return [studio.list.item(i).text() for i in range(studio.list.count())]
+
+
+def test_add_clips_uses_their_trim(studio):
+    studio.load_draft(_draft(studio))
+    c = studio.pieces[0]["clip"]
+    c.trim_in, c.trim_out = 4.0, 11.5
+    studio.add_clips([c])
+    assert (studio.pieces[-1]["start"], studio.pieces[-1]["end"]) == (4.0, 11.5)
+    assert studio.list.currentRow() == 2 and len(_rows(studio)) == 3
+
+
+def test_list_rows_show_order_trim_speed_angle_and_effects(studio):
+    studio.load_draft(_draft(studio))
+    studio.pieces[1]["alt"] = {"path": "f.mp4", "offset": 0, "label": "Me", "alt_label": "Sam"}
+    studio.pieces[1]["effects"] = [{"type": "slowmo", "t": 3.0, "dur": 1.0, "speed": 0.4},
+                                   {"type": "sfx", "t": 4.0, "name": "boom"}]
+    studio._refresh_list(0)
+    r0, r1 = _rows(studio)
+    assert r0.startswith("1.  Game · ") and "(8.0 s)" in r0 and "FX: Z" in r0
+    assert r1.startswith("2.  ") and "1.5×" in r1 and "👥 +Sam" in r1 and "FX: S ♪" in r1
+    assert "2 pieces" in studio.total.text() and "over 60 s" not in studio.total.text()
+
+
+def test_long_short_gets_a_warning(studio):
+    studio.load_draft(_draft(studio))
+    studio.pieces[0]["end"] = 29.0                              # 28 s + 2.67 s … still under a minute
+    studio.add_clips([studio.pieces[0]["clip"]] * 2)            # + 2 × 30 s
+    assert "over 60 s" in studio.total.text()
+    studio.preset.setCurrentIndex(studio.preset.findData("youtube1080"))
+    assert studio.preset.currentData() == "youtube1080"
+    studio._refresh_list(0)
+    assert "over 60 s" not in studio.total.text()               # only Shorts are warned
+
+
+def test_remove_duplicate_range_and_reorder(app, studio):
+    studio.load_draft(_draft(studio))
+    studio.list.setCurrentRow(0)
+    studio._dup()
+    assert [p["start"] for p in studio.pieces] == [1.0, 1.0, 2.0]
+    assert studio.pieces[1]["effects"] == studio.pieces[0]["effects"]
+    assert studio.pieces[1]["effects"] is not studio.pieces[0]["effects"]
+    studio._range(1.5, 7.0)                                     # the preview's trim handles
+    assert (studio.pieces[1]["start"], studio.pieces[1]["end"]) == (1.5, 7.0)
+    studio.list.setCurrentRow(0)
+    studio._remove()
+    assert [p["start"] for p in studio.pieces] == [1.5, 2.0]
+    item = studio.list.takeItem(0)                              # drag row 1 below row 2
+    studio.list.insertItem(1, item)
+    studio._reordered()
+    app.processEvents()
+    assert [p["start"] for p in studio.pieces] == [2.0, 1.5]
+    assert _rows(studio)[0].startswith("1.  ") and "(4.0 s)" in _rows(studio)[0]
+
+
+def test_piece_actions_from_the_timeline(studio):
+    studio.load_draft(_draft(studio))
+    studio._piece_action("move", 0, 1)
+    assert [p["start"] for p in studio.pieces] == [2.0, 1.0] and "Moved clip 1 to position 2" in studio.status.text()
+    studio._piece_action("split", 1, 1.1)
+    assert "Can't split" in studio.status.text() and len(studio.pieces) == 2
+    studio._piece_action("thumb", 1, 5.0)                       # piece 1 starts 2.67 s in; 4 s into it
+    assert studio.thumb_t == pytest.approx(6.67, abs=0.01)
+    studio._piece_action("remove", 0, 0)
+    studio._piece_action("remove", 7, 0)                        # no such piece
+    assert [p["start"] for p in studio.pieces] == [1.0]
+
+
+def test_load_plan_from_an_automatic_edit(studio):
+    from clipforge.editor import Piece
+    studio.load_draft(_draft(studio, hook=""))
+    clips = [p["clip"] for p in studio.pieces]
+    plan = [Piece(clips[1].path, 3.0, 5.0, speed=1.25, effects=[{"type": "zoom", "t": 4.0}]),
+            Piece("/gone.mp4", 0.0, 1.0), Piece(clips[0].path, 2.0, 6.0)]
+    with mock.patch("clipforge.ui.studio.cliplist.suggest_hook", return_value="WAIT FOR IT"):
+        studio.load_plan(plan, clips, preset="youtube1080")
+    assert [(p["clip"].path, p["start"], p["end"], p["speed"]) for p in studio.pieces] == [
+        (clips[1].path, 3.0, 5.0, 1.25), (clips[0].path, 2.0, 6.0, 1.0)]
+    assert studio.preset.currentData() == "youtube1080" and studio.hook.text() == "WAIT FOR IT"
+
+
+def test_pick_clips(studio):
+    studio.load_draft(_draft(studio))
+    clip = studio.pieces[0]["clip"]
+    studio.all_clips = lambda: []
+    with mock.patch("PySide6.QtWidgets.QMessageBox.information") as box:
+        studio.pick_clips()
+    box.assert_called_once()
+    studio.all_clips = lambda: [clip]
+    picker = mock.MagicMock(chosen=[clip])
+    picker.exec.return_value = 1
+    with mock.patch("clipforge.ui.pages.ClipPicker", return_value=picker):
+        studio.pick_clips()
+    assert len(studio.pieces) == 3 and studio.pieces[2]["clip"] is clip
+
+
+def test_clear_starts_a_new_edit(studio):
+    studio.load_draft(_draft(studio, caster=[dict(x) for x in LINES], items=[{"kind": "blur", "t": 1}]))
+    studio.clear()
+    assert studio.pieces == [] and studio.caster_lines == [] and studio.items == []
+    assert (studio.draft_id, studio.thumb_t, studio.hook.text(), studio.hook_pos) == ("", None, "", None)
+    assert studio.list.count() == 0 and studio.list_stack.currentIndex() == 0
+
+
+# ----------------------------------------------------------------------------- playback and preview
+
+def test_clicking_the_timeline_shows_that_moment(studio):
+    studio.load_draft(_draft(studio))
+    studio._seek_out(9.0)                                       # 1 s into piece 2 (8 s + 1 s at 1.5×)
+    assert studio._current == 1 and studio.list.currentRow() == 1
+    assert studio.timeline.playhead == pytest.approx(9.0)
+
+
+def test_play_whole_edit(app, studio):
+    studio.load_draft(_draft(studio))
+    studio.list.setCurrentRow(1)
+    studio._toggle_play_all()
+    assert studio._play_all and studio.play_all_btn.text() == "⏹  Stop" and studio._current == 0
+    assert studio.mid_tabs.currentIndex() == 1 and studio.player.loop_range is False
+    studio._player_pos(int(8.97 * 1000))                       # the end of piece 1 → on to piece 2
+    assert studio._current == 1
+    studio._advancing = False
+    studio._player_pos(int(5.97 * 1000))                       # the end of the last piece → stop
+    assert not studio._play_all and studio.play_all_btn.text() == "▶  Play whole edit"
+    assert studio.player.loop_range is True
+
+
+def test_play_whole_edit_moves_on_when_a_file_ends(studio):
+    studio.load_draft(_draft(studio))
+    studio._toggle_play_all()
+    studio._media_status(studio.player.player.MediaStatus.EndOfMedia)
+    assert studio._current == 1
+    studio._media_status(studio.player.player.MediaStatus.EndOfMedia)   # within 0.4 s: ignored
+    assert studio._play_all and studio._current == 1
+
+
+def test_final_look_preview_speaks_the_caster_and_dips_the_game(studio):
+    studio.load_draft(_draft(studio, caster=[dict(x) for x in LINES]))
+    studio.caster_duck.setValue(40)
+    studio._say, studio._stop_say = mock.Mock(), mock.Mock()
+    with mock.patch.object(type(studio.player), "duck") as duck, \
+            mock.patch.object(type(studio.cam_edit), "set_live") as live:
+        studio._live_tick(1.0, 2.0, True)
+        studio._live_tick(1.3, 2.3, True)                       # crosses the line at 1.2 s
+        assert studio._say.call_count == 1 and studio._say.call_args[0][0]["text"] == "What a shot!"
+        assert duck.call_args[0][0] == pytest.approx(0.4)
+        assert live.call_args[0][4] == "What a shot!"
+        studio._live_tick(3.0, 4.0, True)                       # no line playing: full game volume
+        assert duck.call_args[0][0] == 1.0
+        studio._live_tick(3.1, 4.1, False)
+        studio._stop_say.assert_called()
+
+
+def test_timeline_view_and_thumbnail(studio):
+    with mock.patch("clipforge.ui.studio.playback.save_settings") as save:
+        studio._advanced(False)
+        assert studio.timeline.isHidden() and studio.s.studio_advanced is False
+        studio._advanced(False)
+        save.assert_called_once()                               # saved only when it changes
+    studio._tab_changed(1)
+    assert studio.player.live_frames is True
+    studio._tab_changed(0)
+    assert studio.player.live_frames is False
+    studio.load_draft(_draft(studio))
+    studio.set_thumb(3.456)
+    assert studio.thumb_t == 3.46 and "thumbnail" in studio.status.text()
+
+
+def test_trimming_on_the_timeline_updates_the_preview(studio):
+    studio.load_draft(_draft(studio))
+    studio._select(0)
+    studio.pieces[0]["end"] = 7.5
+    studio._timeline_changed()
+    assert (studio.player.timeline.t_in, studio.player.timeline.t_out) == (1.0, 7.5)
+    assert "(6.5 s)" in _rows(studio)[0]
+
+
+
+def test_total_matches_the_real_length(studio):
+    from clipforge import timeline_model as tm
+    studio.load_draft(_draft(studio))
+    studio.pieces[0]["effects"] = [{"type": "slowmo", "t": 5.0, "dur": 1.2, "speed": 0.4}]   # smooth by default
+    studio.pieces[1]["effects"] = [{"type": "slowmo", "t": 4.0, "dur": 1.2, "speed": 0.4, "smooth": False}]
+    studio._refresh_list(0)
+    from clipforge.ui.widgets import fmt_dur
+    assert f"Total {fmt_dur(tm.total(studio.pieces))}" in studio.total.text()
