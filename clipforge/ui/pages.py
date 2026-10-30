@@ -945,7 +945,7 @@ class StudioPage(QWidget):
         self.music_vol = QSpinBox()
         self.music_vol.setRange(0, 100)
         self.music_vol.setSuffix(" %")
-        self.music_vol.setValue(int(s.music_volume * 100))
+        self.music_vol.setValue(round(s.music_volume * 100))
         self.mic_vol = QSpinBox()
         self.mic_vol.setRange(0, 300)
         self.mic_vol.setSuffix(" %")
@@ -1734,16 +1734,16 @@ class StudioPage(QWidget):
         self.layout_box.setCurrentIndex(max(0, self.layout_box.findData(o.get("layout", "blur"))))
         self.watermark.setText(o.get("watermark", ""))
         self.music.setText(o.get("music", ""))
-        self.music_vol.setValue(int(o.get("music_volume", 0.18) * 100))
+        self.music_vol.setValue(round(o.get("music_volume", 0.18) * 100))
         self.loud.setChecked(o.get("loudnorm", True))
         self.captions.setChecked(o.get("captions", False))
         self.cap_style.setCurrentIndex(max(0, self.cap_style.findData(o.get("caption_style", "pop3"))))
         self.loop.setChecked(o.get("loop", True))
         self.tiktok.setChecked(o.get("tiktok", True))
-        self.game_vol.setValue(int(o.get("game_volume", 1.0) * 100))
-        self.mic_vol.setValue(int(o.get("mic_volume", 1.0) * 100))
-        self.caster_duck.setValue(int(o.get("caster_duck", 0.7) * 100))
-        self.caster_vol.setValue(int(o.get("caster_volume", 1.0) * 100))
+        self.game_vol.setValue(round(o.get("game_volume", 1.0) * 100))
+        self.mic_vol.setValue(round(o.get("mic_volume", 1.0) * 100))
+        self.caster_duck.setValue(round(o.get("caster_duck", 0.7) * 100))
+        self.caster_vol.setValue(round(o.get("caster_volume", 1.0) * 100))
         if o.get("cam"):
             self.cam_edit.set_config(o["cam"])
         self.pieces = pieces
@@ -1808,16 +1808,16 @@ class StudioPage(QWidget):
             if key in st:
                 w.setText(st[key] or "")
         if "music_volume" in st:
-            self.music_vol.setValue(int(st["music_volume"] * 100))
+            self.music_vol.setValue(round(st["music_volume"] * 100))
         for key, w in (("loop", self.loop), ("tiktok", self.tiktok), ("captions", self.captions)):
             if key in st:
                 w.setChecked(bool(st[key]))
         if st.get("caption_style"):
             self.cap_style.setCurrentIndex(max(0, self.cap_style.findData(st["caption_style"])))
         if "caster_duck" in st:
-            self.caster_duck.setValue(int(st["caster_duck"] * 100))
+            self.caster_duck.setValue(round(st["caster_duck"] * 100))
         if "caster_volume" in st:
-            self.caster_vol.setValue(int(st["caster_volume"] * 100))
+            self.caster_vol.setValue(round(st["caster_volume"] * 100))
         self._refresh_cam_edit(frames=False)
         self._style_refresh(name)
         self._mark()
