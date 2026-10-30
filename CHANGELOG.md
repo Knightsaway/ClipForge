@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.5.3](https://github.com/Knightsaway/ClipForge/compare/v0.5.2...v0.5.3) (2026-10-30)
+
+
+### Bug Fixes
+
+* **config:** keep a damaged settings.json instead of overwriting it ([f597921](https://github.com/Knightsaway/ClipForge/commit/f597921a80e56d1c28a29a3fd9ecf44d9d77aa21))
+* **editor:** effects just after a late slow-mo are no longer dropped ([b688ee2](https://github.com/Knightsaway/ClipForge/commit/b688ee25cccb850a987f0cd6438620cd5e830320))
+* **library:** keep damaged clip sidecars and drafts instead of losing them ([847aad1](https://github.com/Knightsaway/ClipForge/commit/847aad1f1c38268dbbe838e6df51a3659c8780df))
+* never lose settings, clip data or drafts to a damaged file; lost effects after late slow-mo ([796c7af](https://github.com/Knightsaway/ClipForge/commit/796c7af52815b40892912616dcd01c93ebb23407))
+* **release:** keep pyproject.toml version in step with releases ([df7a881](https://github.com/Knightsaway/ClipForge/commit/df7a88120d5c4ae32407191f57f8434af695b1eb))
+* **studio:** a failed re-recorded caster line or friend's-angle sync is reported ([41f5f3d](https://github.com/Knightsaway/ClipForge/commit/41f5f3d76a5f32a2cc78c207dd4f7422a13096f4))
+* **studio:** clip list total matches the real length; clip list and playback move into ui/studio/ ([84ae9a2](https://github.com/Knightsaway/ClipForge/commit/84ae9a2310737e6adc1307b97b814b175067ccdb))
+* **studio:** stuck caster re-word / friend's-angle sync; AI, auto edit and squad parts move into ui/studio/ ([9d58954](https://github.com/Knightsaway/ClipForge/commit/9d58954ac806bf66b5882659b604a92299aed9c2))
+* **studio:** the clip list's total length matches the real video ([9b6098b](https://github.com/Knightsaway/ClipForge/commit/9b6098b6eb425a0b0aa6cae7645cdc84c48b3d5f))
+* **studio:** volumes and sizes reopen at the value you saved ([d2f46c6](https://github.com/Knightsaway/ClipForge/commit/d2f46c69673cb06d2ce7da534b2859a2aa0bbc69))
+* **studio:** volumes reopen as saved; Studio tests; undo/draft/style logic out of StudioPage ([d4fa75a](https://github.com/Knightsaway/ClipForge/commit/d4fa75a95d7a7e20cf823d023b5ee24c8763e6ea))
+* time limits on the last FFmpeg and schtasks calls that had none ([a1b0581](https://github.com/Knightsaway/ClipForge/commit/a1b058189b01bec881bfee49f34e182b02cc48c9))
+
 ## [0.5.2](https://github.com/Knightsaway/ClipForge/compare/v0.5.1...v0.5.2) (2026-10-29)
 
 
