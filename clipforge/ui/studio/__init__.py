@@ -10,7 +10,8 @@ from .playback import PlaybackMixin
 from .presets import StyleMixin
 from .render import RenderMixin
 from .saving import DraftMixin
+from .screen import ScreenMixin
 from .squad import SquadMixin
 
 __all__ = ["AIMixin", "AutoEditMixin", "ClipListMixin", "DraftMixin", "EffectsMixin", "HistoryMixin", "KeyboardMixin",
-           "OverlayMixin", "PlaybackMixin", "RenderMixin", "SquadMixin", "StyleMixin"]
+           "OverlayMixin", "PlaybackMixin", "RenderMixin", "ScreenMixin", "SquadMixin", "StyleMixin"]
