@@ -57,6 +57,7 @@ def studio(app, tmp_path: Path):
         stack.enter_context(mock.patch.object(drafts, "DIR", tmp_path / "drafts"))
         stack.enter_context(mock.patch("clipforge.config.SETTINGS_FILE", tmp_path / "settings.json"))
         stack.enter_context(mock.patch("clipforge.ui.pages.save_settings"))
+        stack.enter_context(mock.patch("clipforge.ui.studio.presets.save_settings"))
         st = StudioPage(s, Library(s.library), Jobs())
         yield st
         st._hist_timer.stop()
