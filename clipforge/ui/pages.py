@@ -23,7 +23,8 @@ from ..highlights import find_moments
 from ..library import Clip, Library
 from . import theme
 from .player import PlayerPanel
-from .studio import DraftMixin, HistoryMixin, KeyboardMixin, StyleMixin
+from .studio import (DraftMixin, EffectsMixin, HistoryMixin, KeyboardMixin, OverlayMixin, RenderMixin,
+                     StyleMixin)
 from .widgets import ClipCard, HotkeyEdit, day_label, fmt_dur
 
 
@@ -705,7 +706,8 @@ class ClipPicker(QDialog):
 
 
 # ====================================================================== studio
-class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, QWidget):
+class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, EffectsMixin, OverlayMixin, RenderMixin,
+                 QWidget):
     rendered = Signal(object)
     anotherTake = Signal(dict)     # "Try another edit": the main window makes it in the background
 
@@ -1385,66 +1387,6 @@ class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, QWidget):
     def _cur(self) -> dict | None:
         return self.pieces[self._current] if 0 <= self._current < len(self.pieces) else None
 
-    def _add_fx(self, fx: dict):
-        pc = self._cur()
-        if not pc:
-            QMessageBox.information(self, "Effects", "Select a piece in the list first.")
-            return
-        t = self.player.position
-        if not (pc["start"] <= t <= pc["end"]):
-            t = (pc["start"] + pc["end"]) / 2
-        fx = dict(fx, t=round(t, 2))
-        if fx["type"] == "sfx" and not fx.get("name"):
-            return
-        pc["effects"].append(fx)
-        self._show_fx()
-        self._refresh_list(self._current)
-
-    def _clear_fx(self):
-        pc = self._cur()
-        if pc:
-            pc["effects"] = []
-            self._show_fx()
-            self._refresh_list(self._current)
-
-    def _add_gif(self):
-        pc = self._cur()
-        if not pc:
-            QMessageBox.information(self, "GIFs", "Select a piece in the list first, then move the playhead "
-                                                  "to where the GIF should pop up.")
-            return
-        from .gifs import GifPicker, gif_ratio
-        t = self.player.position
-        self.player.player.pause()
-        dlg = GifPicker(self.s, self)
-        if dlg.exec() != QDialog.Accepted or not dlg.chosen:
-            return
-        if not (pc["start"] <= t <= pc["end"]):
-            t = pc["start"]
-        vertical = PRESETS[self.preset.currentData()].vertical
-        ratio = gif_ratio(dlg.chosen)
-        w = 0.45 if vertical else 0.28
-        box = {"x": round((1 - w) / 2, 4), "y": 0.16 if vertical else 0.12, "w": w}
-        pc["effects"].append({"type": "gif", "t": round(t, 2), "dur": round(dlg.seconds, 2), "path": dlg.chosen,
-                              "ratio": ratio, "box": box})
-        self._show_fx()
-        self._refresh_list(self._current)
-        self.mid_tabs.setCurrentIndex(1)           # straight to placing it
-        self._refresh_cam_edit()
-        gifs = [e for e in pc["effects"] if e.get("type") == "gif"]
-        self.cam_edit.select_gif(len(gifs) - 1)
-        self.status.setText("🎞 GIF added — drag it where you want it, drag a corner to resize.")
-
-    def _gifs_changed(self):
-        pc = self._cur()
-        if not pc:
-            return
-        if any(e.get("_remove") for e in pc["effects"]):
-            pc["effects"] = [e for e in pc["effects"] if not e.get("_remove")]
-            self.cam_edit.set_gifs(pc["effects"])
-        self._show_fx()
-        self._mark()
-
     autoEditReady = Signal(object)
 
     def _another_take(self):
@@ -1514,116 +1456,9 @@ class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, QWidget):
             return
         self.status.setText(msg + " Check it on the timeline, change anything, then press Render video.")
 
-    # ----- text, blur boxes, mutes, transitions
-    def _out_now(self) -> float:
-        return float(getattr(self.timeline, "playhead", 0.0))
-
-    def _add_item(self, item: dict, place: bool = True):
-        self.items.append(item)
-        self.timeline.sel = ("item", len(self.items) - 1)
-        self.timeline.update()
-        self._mark()
-        if place:
-            self.mid_tabs.setCurrentIndex(1)
-            self.cam_edit.set_items(self.items)
-            self.cam_edit.select_item(len(self.items) - 1)
-
-    def _add_text(self):
-        if not self.pieces:
-            return
-        text, ok = QInputDialog.getText(self, "Text", "What should it say?", text="")
-        if not ok or not text.strip():
-            return
-        item = {"kind": "text", "t": round(self._out_now(), 2), "dur": 2.5, "text": text.strip(),
-                "cx": 0.5, "cy": 0.45, "scale": 1.0, "style": "white", "pop": True}
-        tpl = self.s.text_templates.get(self.s.text_default)   # your last-used text look
-        if tpl:
-            item.update({k: v for k, v in tpl.items() if k in ("style", "scale", "cx", "cy", "pop", "dur")})
-        self._add_item(item)
-        self.status.setText("T Text added — drag it on the video, change its look on the right of the Final look tab.")
-
-    def _add_blur(self):
-        if not self.pieces:
-            return
-        self._add_item({"kind": "blur", "t": round(self._out_now(), 2), "dur": 3.0,
-                        "x": 0.05, "y": 0.75, "w": 0.45, "h": 0.12})
-        self.status.setText("▦ Blur box added — drag it over what you want hidden, drag a corner to resize.")
-
-    def _add_mute(self):
-        if not self.pieces:
-            return
-        self._add_item({"kind": "mute", "t": round(self._out_now(), 2), "dur": 1.0, "bleep": True}, place=False)
-        self.status.setText("🔇 Mute added at the playhead (with a bleep) — stretch it on the timeline; "
-                            "right-click it to switch the bleep off.")
-
     bleepReady = Signal(object)
 
-    def _auto_bleep(self):
-        from .. import captions
-        if not self.pieces:
-            return
-        if not captions.available():
-            QMessageBox.information(self, "Bleep swearing", "This needs the speech-to-text add-on: run setup.bat "
-                                    "and say yes to captions.")
-            return
-        if not getattr(self, "_bleep_wired", False):
-            self._bleep_wired = True
-            self.bleepReady.connect(self._bleep_done)
-        pieces = [Piece(p["clip"].path, p["start"], p["end"], speed=p.get("speed", 1.0), effects=p.get("effects", []))
-                  for p in self.pieces]
-        self.status.setText("🤬 Listening for swearing…")
-
-        def work():
-            import tempfile
-            try:
-                words = captions.transcribe_pieces(pieces, Path(tempfile.mkdtemp(prefix="bleep_")))
-                self.bleepReady.emit(captions.swear_spans(words))
-            except Exception as e:
-                self.bleepReady.emit(str(e))
-        threading.Thread(target=work, daemon=True).start()
-
-    def _bleep_done(self, res):
-        if isinstance(res, str):
-            self.status.setText(f"🤬 Couldn't listen: {res[:120]}")
-            return
-        have = {(round(m["t"], 1)) for m in self.items if m.get("kind") == "mute"}
-        n = 0
-        for a, b in res:
-            if round(a, 1) not in have:
-                self.items.append({"kind": "mute", "t": a, "dur": round(b - a, 3), "bleep": True, "auto": True})
-                n += 1
-        self.timeline.update()
-        self._mark()
-        self.status.setText(f"🤬 Bleeped {n} word{'s' if n != 1 else ''}." if n else "🤬 No swearing found. 😇")
-
-    def _set_transition(self, *_):
-        pc = self._cur()
-        if not pc:
-            return
-        name = self.trans_box.currentData() or ""
-        pc["effects"] = [e for e in pc.get("effects", []) if e.get("type") != "transition"]
-        if name:
-            pc["effects"].append({"type": "transition", "name": name, "t": pc["start"]})
-        self._refresh_list(self._current)
-
-    def _sync_transition_box(self):
-        pc = self._cur()
-        name = next((e.get("name") for e in (pc or {}).get("effects", []) if e.get("type") == "transition"), "")
-        self.trans_box.blockSignals(True)
-        self.trans_box.setCurrentIndex(max(0, self.trans_box.findData(name or "")))
-        self.trans_box.blockSignals(False)
-
-    def _items_changed(self):
-        self.timeline.update()
-        self._mark()
-
-    def _timeline_item(self, k: int):
-        it = self.items[k] if 0 <= k < len(self.items) else None
-        if it and it.get("kind") in ("text", "blur"):
-            self.cam_edit.set_items(self.items)
-            self.cam_edit.select_item(k)
-
-    # drafts, styles, undo / redo and keyboard shortcuts: see ui/studio/
+    # drafts, styles, undo / redo, shortcuts, effects, text / blur / mutes and rendering: see ui/studio/
     queued = Signal(str)          # a draft went into the render queue (studio/saving.py)
 
     # ----- dead air, beat sync, thumbnail
@@ -1978,34 +1813,6 @@ class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, QWidget):
         self.set_script(None)
         self.timeline.update()
 
-    def _speed_changed(self, v):
-        pc = self._cur()
-        if pc and abs(pc.get("speed", 1.0) - v) > 1e-3:
-            pc["speed"] = v
-            self._refresh_list(self._current)
-
-    def _show_fx(self):
-        pc = self._cur()
-        self.player.timeline.effects = pc["effects"] if pc else []
-        self.player.timeline.update()
-        if hasattr(self, "cam_edit"):
-            self.cam_edit.set_gifs(pc["effects"] if pc else [])
-
-    @staticmethod
-    def _auto_fx_for(pieces: list[dict]) -> tuple[list[list], bool]:
-        from ..autoedit import auto_fx_for
-        return auto_fx_for(pieces)
-
-    def auto_fx_all(self):
-        fxs, used_sound = self._auto_fx_for(self.pieces)
-        for pc, fx in zip(self.pieces, fxs):
-            pc["effects"] = fx + [e for e in pc["effects"] if e.get("type") == "gif"]   # keep your GIFs
-        self._show_fx()
-        self._refresh_list(max(0, self._current))
-        n_fx = sum(len(p["effects"]) for p in self.pieces)
-        self.status.setText((f"✨ Added {n_fx} effects" + (" (on the loudest moments)" if used_sound else ""))
-                            if n_fx else "Couldn't find any exciting moments — add effects by hand at the playhead.")
-
     def clear(self):
         self.pieces = []
         self.ai_post = None
@@ -2157,62 +1964,6 @@ class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, QWidget):
             if not (pc["start"] <= t <= pc["end"]):
                 t = min(pc["end"], pc["start"] + 1)
             self.cam_edit.load_piece(c.path, t, bool(c.has_cam > 0))
-
-    # ----- render
-    def render(self):
-        if not self.pieces:
-            QMessageBox.information(self, "Studio", "Add some clips first (Ctrl+click clips → Create Montage, "
-                                                     "or press ⚡ Auto Short).")
-            return
-        self.player.player.pause()
-        if self._play_all:
-            self._toggle_play_all(stop=True)
-        # remember the look for next time
-        self.s.watermark_text = self.watermark.text().strip()
-        self.s.music_file = self.music.text().strip()
-        self.s.music_volume = self.music_vol.value() / 100
-        self.s.short_layout = self.layout_box.currentData()
-        self.s.captions = self.captions.isChecked()
-        self.s.caption_style = self.cap_style.currentData()
-        if self.caster_lines:
-            self.s.caster_game_volume = self.caster_duck.value() / 100
-        save_settings(self.s)
-        d = self.save_draft(status="rendering")
-        self.render_btn.setEnabled(False)
-        self.bar.setVisible(True)
-        self.bar.setValue(0)
-        from .. import drafts
-        s, exports = self.s, self.lib.exports_dir
-
-        def job(progress):
-            try:
-                outs = drafts.render(d, s, exports, progress=progress)
-            except Exception as e:
-                drafts.update(d["id"], status="failed", error=str(e))
-                raise
-            drafts.update(d["id"], status="done", output=str(outs[0]), outputs=[str(o) for o in outs])
-            return outs[0]
-        self._rendering_draft = d["id"]
-        self.jobs.run("studio", job)
-
-    def _progress(self, job, f, msg):
-        if job == "studio":
-            self.bar.setValue(int(f * 1000))
-            self.status.setText(msg)
-
-    def _done(self, job, path):
-        if job == "studio":
-            self.render_btn.setEnabled(True)
-            self.bar.setVisible(False)
-            self.status.setText(f"✔ Saved {Path(path).name}")
-            self.rendered.emit(path)
-
-    def _failed(self, job, err):
-        if job == "studio":
-            self.render_btn.setEnabled(True)
-            self.bar.setVisible(False)
-            self.status.setText("Render failed")
-            QMessageBox.warning(self, "Render failed", err)
 
 
 # ====================================================================== exports

@@ -266,3 +266,176 @@ def test_every_studio_shortcut_is_registered_once(studio):
     for k in ("S", "Del", "Backspace", "J", "K", "L", "Left", "Right", "Shift+Left", "Shift+Right", "Ctrl+D",
               "T", "B", "M", "Space"):
         assert keys.count(QKeySequence(k).toString()) == 1, k
+
+
+# ----------------------------------------------------------------------------- effects
+
+def _at(pos: float):
+    from clipforge.ui.player import PlayerPanel
+    return mock.patch.object(PlayerPanel, "position", new_callable=mock.PropertyMock, return_value=pos)
+
+
+def test_add_effect_at_the_playhead(studio):
+    studio.load_draft(_draft(studio))
+    studio._select(0)                                         # piece 0 is clip time 1 .. 9
+    with _at(5.678):
+        studio._add_fx({"type": "zoom", "amount": 0.3})
+    with _at(20.0):                                           # playhead outside the piece: its middle
+        studio._add_fx({"type": "slowmo", "dur": 1.2})
+    with _at(5.0):
+        studio._add_fx({"type": "sfx", "name": ""})           # a sound effect needs a sound
+    fx = studio.pieces[0]["effects"]
+    assert [(e["type"], e["t"]) for e in fx] == [("zoom", 3.0), ("zoom", 5.68), ("slowmo", 5.0)]
+    assert studio.player.timeline.effects is fx
+    studio._clear_fx()
+    assert studio.pieces[0]["effects"] == [] and studio.player.timeline.effects == []
+
+
+def test_add_effect_needs_a_selected_piece(studio):
+    studio.load_draft(_draft(studio))
+    studio._current = -1
+    with mock.patch("PySide6.QtWidgets.QMessageBox.information") as box:
+        studio._add_fx({"type": "zoom"})
+        studio._add_gif()
+    assert box.call_count == 2
+    assert [len(p["effects"]) for p in studio.pieces] == [1, 0]
+
+
+def test_add_gif(studio):
+    from PySide6.QtWidgets import QDialog
+    studio.load_draft(_draft(studio))
+    studio._select(1)                                         # piece 1 is clip time 2 .. 6, vertical preset
+    picker = mock.MagicMock(chosen="party.gif", seconds=2.5)
+    picker.exec.return_value = QDialog.Accepted
+    with _at(4.0), mock.patch("clipforge.ui.gifs.GifPicker", return_value=picker), \
+            mock.patch("clipforge.ui.gifs.gif_ratio", return_value=1.0):
+        studio._add_gif()
+    g = studio.pieces[1]["effects"][-1]
+    assert (g["type"], g["t"], g["dur"], g["path"], g["ratio"]) == ("gif", 4.0, 2.5, "party.gif", 1.0)
+    assert g["box"] == {"x": 0.275, "y": 0.16, "w": 0.45}      # centred near the top of a Short
+    assert studio.mid_tabs.currentIndex() == 1                # straight to placing it
+    picker.exec.return_value = QDialog.Rejected
+    with mock.patch("clipforge.ui.gifs.GifPicker", return_value=picker):
+        studio._add_gif()
+    assert len(studio.pieces[1]["effects"]) == 1              # cancelled: nothing added
+
+
+def test_removed_gif_leaves_the_piece(studio):
+    studio.load_draft(_draft(studio))
+    studio._select(0)
+    studio.pieces[0]["effects"].append({"type": "gif", "t": 2.0, "path": "x.gif", "_remove": True})
+    studio._gifs_changed()
+    assert [e["type"] for e in studio.pieces[0]["effects"]] == ["zoom"]
+
+
+def test_transition_and_speed(studio):
+    studio.load_draft(_draft(studio))
+    studio._select(1)
+    i = studio.trans_box.findData("crossfade")
+    assert i > 0
+    studio.trans_box.setCurrentIndex(i)
+    studio._set_transition()
+    studio._set_transition()                                  # choosing again doesn't stack transitions
+    tr = [e for e in studio.pieces[1]["effects"] if e["type"] == "transition"]
+    assert tr == [{"type": "transition", "name": "crossfade", "t": 2.0}]
+    studio._select(0)
+    assert studio.trans_box.currentData() == ""               # the box follows the selected piece
+    studio._select(1)
+    assert studio.trans_box.currentData() == "crossfade"
+    studio.trans_box.setCurrentIndex(0)
+    studio._set_transition()
+    assert not [e for e in studio.pieces[1]["effects"] if e["type"] == "transition"]
+    studio.speed.setValue(2.0)
+    assert studio.pieces[1]["speed"] == 2.0
+
+
+def test_auto_effects_keep_your_gifs(studio):
+    studio.load_draft(_draft(studio))
+    gif = {"type": "gif", "t": 2.0, "path": "mine.gif"}
+    studio.pieces[0]["effects"].append(gif)
+    new = [[{"type": "zoom", "t": 4.0}], [{"type": "sfx", "t": 3.0, "name": "boom"}]]
+    with mock.patch("clipforge.autoedit.auto_fx_for", return_value=(new, True)):
+        studio.auto_fx_all()
+    assert studio.pieces[0]["effects"] == [{"type": "zoom", "t": 4.0}, gif]
+    assert studio.pieces[1]["effects"] == [{"type": "sfx", "t": 3.0, "name": "boom"}]
+    assert "loudest" in studio.status.text()
+
+
+def test_text_blur_and_mute_items(studio):
+    studio.load_draft(_draft(studio))
+    studio.timeline.playhead = 3.456
+    with mock.patch("PySide6.QtWidgets.QInputDialog.getText", return_value=("  nice  ", True)):
+        studio._add_text()
+    with mock.patch("PySide6.QtWidgets.QInputDialog.getText", return_value=("", True)):
+        studio._add_text()                                    # empty text: nothing added
+    studio._add_blur()
+    tab = studio.mid_tabs.currentIndex()
+    studio.mid_tabs.setCurrentIndex(0)
+    studio._add_mute()
+    kinds = [(it["kind"], it["t"]) for it in studio.items]
+    assert kinds == [("text", 3.46), ("blur", 3.46), ("mute", 3.46)]
+    assert studio.items[0]["text"] == "nice" and studio.items[2]["bleep"] is True
+    assert tab == 1 and studio.mid_tabs.currentIndex() == 0   # a mute isn't placed on the video
+    assert studio.timeline.sel == ("item", 2)
+
+
+def test_bleep_results(studio):
+    studio.load_draft(_draft(studio))
+    studio.items = [{"kind": "mute", "t": 1.0, "dur": 0.5, "bleep": True}]
+    studio._bleep_done([(1.04, 1.4), (5.0, 5.3), (7.25, 7.6)])
+    mutes = [(m["t"], m["dur"]) for m in studio.items if m["kind"] == "mute"]
+    assert mutes == [(1.0, 0.5), (5.0, 0.3), (7.25, 0.35)]   # the one already muted isn't doubled
+    assert "Bleeped 2 words" in studio.status.text()
+    studio._bleep_done("model missing")
+    assert "Couldn't listen" in studio.status.text() and len(studio.items) == 3
+
+
+# ----------------------------------------------------------------------------- render
+
+def _wait(app, cond, secs=5.0):
+    import time
+    end = time.time() + secs
+    while not cond() and time.time() < end:
+        app.processEvents()
+        time.sleep(0.01)
+    assert cond(), "timed out"
+
+
+def test_render_remembers_the_look_and_finishes_the_draft(app, studio, tmp_path):
+    studio.load_draft(_draft(studio))
+    out = tmp_path / "Game Short.mp4"
+    done = []
+    studio.rendered.connect(done.append)
+    with mock.patch("clipforge.drafts.render", return_value=[out, tmp_path / "Game TikTok.mp4"]) as render, \
+            mock.patch("clipforge.ui.studio.render.save_settings") as save:
+        studio.render()
+        assert not studio.render_btn.isEnabled() and not studio.bar.isHidden()   # busy until the result arrives
+        _wait(app, lambda: done)
+    assert done == [out]
+    d = render.call_args[0][0]
+    assert d["status"] == "rendering" and d["edit"]["opts"]["watermark"] == "@me"
+    save.assert_called_once()
+    s = studio.s
+    assert (s.watermark_text, s.short_layout, s.captions, s.caption_style) == ("@me", "crop", True, "word")
+    assert s.music_volume == pytest.approx(0.29) and s.caster_game_volume == pytest.approx(0.5)
+    saved = drafts.load(d["id"])
+    assert saved["status"] == "done" and saved["output"] == str(out) and len(saved["outputs"]) == 2
+    assert studio.render_btn.isEnabled() and "Saved Game Short.mp4" in studio.status.text()
+
+
+def test_render_failure_is_reported_and_marked(app, studio):
+    studio.load_draft(_draft(studio))
+    with mock.patch("clipforge.drafts.render", side_effect=RuntimeError("encoder exploded")), \
+            mock.patch("clipforge.ui.studio.render.save_settings"), \
+            mock.patch("PySide6.QtWidgets.QMessageBox.warning") as warn:
+        studio.render()
+        _wait(app, lambda: warn.called)
+    assert warn.call_args[0][1:] == ("Render failed", "encoder exploded")
+    assert drafts.load(studio.draft_id)["status"] == "failed"
+    assert studio.render_btn.isEnabled() and studio.status.text() == "Render failed"
+
+
+def test_render_needs_clips(studio):
+    with mock.patch("PySide6.QtWidgets.QMessageBox.information") as box:
+        studio.render()
+    box.assert_called_once()
