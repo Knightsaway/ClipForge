@@ -25,18 +25,43 @@ def app():
     return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
 
+def _no_dialogs(opened: list):
+    """A dialog a test didn't expect would wait forever offscreen: refuse it and remember it, so the test fails
+    (Qt only prints an exception raised inside a shortcut or signal). Tests patch the dialogs they expect."""
+    from PySide6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox
+
+    def boom(*a, **k):
+        opened.append(a[1:3] if len(a) > 2 else a)
+        raise AssertionError("a dialog opened during a Studio test")
+    patches = [mock.patch.object(QDialog, "exec", boom)]
+    patches += [mock.patch.object(QMessageBox, n, boom) for n in ("information", "question", "warning", "critical")]
+    patches += [mock.patch.object(QInputDialog, n, boom) for n in ("getText", "getItem", "getInt", "getDouble")]
+    patches += [mock.patch.object(QFileDialog, n, boom) for n in ("getOpenFileName", "getOpenFileNames",
+                                                                  "getSaveFileName", "getExistingDirectory")]
+    return patches
+
+
 @pytest.fixture
 def studio(app, tmp_path: Path):
+    from contextlib import ExitStack
+
     from clipforge.ui.pages import Jobs, StudioPage
     s = Settings(library_dir=str(tmp_path / "lib"))
     (tmp_path / "lib" / "Game").mkdir(parents=True)
-    with mock.patch.object(library.ff, "duration", lambda p: 30.0), \
-         mock.patch.object(library, "_video_tracks", lambda p: 1), \
-         mock.patch.object(drafts, "DIR", tmp_path / "drafts"), \
-         mock.patch("clipforge.ui.pages.save_settings"):
+    opened: list = []
+    with ExitStack() as stack:
+        for pt in _no_dialogs(opened):
+            stack.enter_context(pt)
+        stack.enter_context(mock.patch.object(library.ff, "duration", lambda p: 30.0))
+        stack.enter_context(mock.patch.object(library, "_video_tracks", lambda p: 1))
+        stack.enter_context(mock.patch.object(drafts, "DIR", tmp_path / "drafts"))
+        stack.enter_context(mock.patch("clipforge.config.SETTINGS_FILE", tmp_path / "settings.json"))
+        stack.enter_context(mock.patch("clipforge.ui.pages.save_settings"))
+        stack.enter_context(mock.patch("clipforge.ui.studio.presets.save_settings"))
         st = StudioPage(s, Library(s.library), Jobs())
         yield st
         st._hist_timer.stop()
+        assert not opened, f"unexpected dialog(s): {opened}"
         st.deleteLater()
 
 
@@ -73,7 +98,7 @@ def test_draft_opens_exactly_as_saved(studio):
 def test_draft_with_missing_clips(studio):
     d = _draft(studio)
     d["edit"]["pieces"][0]["path"] = str(Path(studio.s.library_dir) / "gone.mp4")
-    with mock.patch("clipforge.ui.pages.QMessageBox.information") as box:
+    with mock.patch("PySide6.QtWidgets.QMessageBox.information") as box:
         assert studio.load_draft(d)
         assert len(studio.pieces) == 1
         d["edit"]["pieces"][1]["path"] = d["edit"]["pieces"][0]["path"]
@@ -178,7 +203,7 @@ def test_style_round_trip(studio):
 def test_style_bookkeeping(studio):
     s = studio.s
     studio.load_draft(_draft(studio))
-    with mock.patch("clipforge.ui.pages.QInputDialog.getText", return_value=("Facecam right", True)):
+    with mock.patch("PySide6.QtWidgets.QInputDialog.getText", return_value=("Facecam right", True)):
         studio._style_save()
     assert "Facecam right" in s.styles and s.default_style == "Facecam right"
     studio._style_set(game="Game", name="Facecam right")
@@ -201,3 +226,43 @@ def test_undo_restores_a_copy_of_friend_angles(studio):
     studio.redo()
     studio.undo()
     assert studio.pieces[0]["alt"]["offset"] == 1.5         # …doesn't rewrite the history
+
+
+def _press(studio, key: str):
+    from PySide6.QtGui import QKeySequence, QShortcut
+    hits = [sc for sc in studio.findChildren(QShortcut) if sc.key() == QKeySequence(key)]
+    assert len(hits) == 1, key
+    hits[0].activated.emit()
+
+
+def test_keyboard_split_delete_duplicate_and_text(studio):
+    from clipforge.ui.player import PlayerPanel
+    studio.load_draft(_draft(studio))
+    studio._select(0)
+    with mock.patch.object(PlayerPanel, "position", new_callable=mock.PropertyMock, return_value=4.0):
+        _press(studio, "S")                                   # split the selected clip where the playhead is
+    assert [(p["start"], p["end"]) for p in studio.pieces] == [(1.0, 4.0), (4.0, 9.0), (2.0, 6.0)]
+    assert [e["t"] for e in studio.pieces[1]["effects"]] == []
+    assert [e["t"] for e in studio.pieces[0]["effects"]] == [3.0]
+    studio._select(2)
+    _press(studio, "Ctrl+D")
+    assert len(studio.pieces) == 4 and studio.pieces[3]["start"] == 2.0
+    assert studio.pieces[3]["effects"] is not studio.pieces[2]["effects"]
+    studio._select(0)
+    studio.timeline.sel = None
+    _press(studio, "Delete")
+    assert [(p["start"], p["end"]) for p in studio.pieces][0] == (4.0, 9.0) and len(studio.pieces) == 3
+    n = len(studio.items)
+    with mock.patch("PySide6.QtWidgets.QInputDialog.getText", return_value=("GG", True)):
+        _press(studio, "T")
+    _press(studio, "B")
+    assert len(studio.items) == n + 2
+    assert (studio.items[-2]["kind"], studio.items[-2]["text"], studio.items[-1]["kind"]) == ("text", "GG", "blur")
+
+
+def test_every_studio_shortcut_is_registered_once(studio):
+    from PySide6.QtGui import QKeySequence, QShortcut
+    keys = [sc.key().toString() for sc in studio.findChildren(QShortcut)]
+    for k in ("S", "Del", "Backspace", "J", "K", "L", "Left", "Right", "Shift+Left", "Shift+Right", "Ctrl+D",
+              "T", "B", "M", "Space"):
+        assert keys.count(QKeySequence(k).toString()) == 1, k

@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDoubleS
                                QListWidget, QListWidgetItem, QMenu, QMessageBox, QProgressBar, QPushButton,
                                QScrollArea, QSpinBox, QSplitter, QVBoxLayout, QWidget)
 
-from .. import drafts, editor, ff, styles
+from .. import editor, ff
 from ..autoshort import suggest_hook
 from ..config import IS_WINDOWS, Settings, save_settings
 from ..edit_history import EditHistory
@@ -23,6 +23,7 @@ from ..highlights import find_moments
 from ..library import Clip, Library
 from . import theme
 from .player import PlayerPanel
+from .studio import DraftMixin, HistoryMixin, KeyboardMixin, StyleMixin
 from .widgets import ClipCard, HotkeyEdit, day_label, fmt_dur
 
 
@@ -704,7 +705,7 @@ class ClipPicker(QDialog):
 
 
 # ====================================================================== studio
-class StudioPage(QWidget):
+class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, QWidget):
     rendered = Signal(object)
     anotherTake = Signal(dict)     # "Try another edit": the main window makes it in the background
 
@@ -1622,217 +1623,8 @@ class StudioPage(QWidget):
             self.cam_edit.set_items(self.items)
             self.cam_edit.select_item(k)
 
-    # ----- keyboard
-    def _shortcuts(self):
-        from PySide6.QtGui import QKeySequence, QShortcut
-        keys = {"S": self._key_split, "Delete": self._key_delete, "Backspace": self._key_delete,
-                "J": lambda: self._key_seek(-2.0), "K": self._key_playpause, "L": self._key_play,
-                "Left": lambda: self._key_nudge(-0.1), "Right": lambda: self._key_nudge(0.1),
-                "Shift+Left": lambda: self._key_nudge(-1.0), "Shift+Right": lambda: self._key_nudge(1.0),
-                "Ctrl+D": lambda: self._piece_action("duplicate", self._current, 0.0),
-                "T": self._add_text, "B": self._add_blur, "M": self._add_mute, "Space": self._key_playpause}
-        for k, fn in keys.items():
-            sc = QShortcut(QKeySequence(k), self)
-            sc.setContext(Qt.WidgetWithChildrenShortcut)
-            sc.activated.connect(fn)
-
-    def _key_split(self):
-        pc = self._cur()
-        if pc:
-            self._piece_action("split", self._current, self.player.position)
-
-    def _key_delete(self):
-        sel = getattr(self.timeline, "sel", None)
-        if sel:
-            self.timeline.delete_selected()
-        elif self._cur():
-            self._piece_action("remove", self._current, 0.0)
-
-    def _key_seek(self, dt: float):
-        self.player.player.setPosition(max(0, int((self.player.position + dt) * 1000)))
-
-    def _key_playpause(self):
-        self.player.toggle()
-
-    def _key_play(self):
-        if self.player.player.playbackState() != self.player.player.PlaybackState.PlayingState:
-            self.player.toggle()
-
-    def _key_nudge(self, dt: float):
-        if getattr(self.timeline, "sel", None):
-            self.timeline.nudge_selected(dt)
-        else:
-            self._key_seek(dt)
-
-    # ----- drafts & render queue
-    queued = Signal(str)          # a draft went into the render queue
-
-    def edit_state(self) -> dict:
-        """Everything needed to rebuild / render this edit later (saved as a draft)."""
-        import copy
-        return {
-            "pieces": drafts.pieces_to_json(self.pieces),
-            "hook": self.hook.text(), "hook_start": self.hook_start, "hook_secs": self.hook_secs,
-            "hook_secs_eff": self.hook_secs_eff(), "hook_whole": self.hook_whole,
-            "hook_pos": copy.deepcopy(self.hook_pos), "hook_scale": self.hook_scale,
-            "hook_user": getattr(self, "hook_user", False), "caster": copy.deepcopy(self.caster_lines),
-            "items": copy.deepcopy(self.items),
-            "script": copy.deepcopy(self.script), "ai_post": self.ai_post, "thumb_t": self.thumb_t,
-            "game": self._game() or "Clips",
-            "opts": {**self._opts_values(), "cam": self.cam_edit.config()},
-        }
-
-    def save_draft(self, **fields) -> dict | None:
-        if not self.pieces:
-            return None
-        d = drafts.for_saving(drafts.load(self.draft_id) if self.draft_id else None, self.draft_origin)
-        d["edit"] = self.edit_state()
-        d["title"] = self.hook.text().strip() or f"{self._game() or 'Clips'} · {len(self.pieces)} clips"
-        d["game"] = self._game()
-        from .. import timeline_model as tm
-        d["length"] = round(tm.total(self.pieces), 1)
-        d["thumb"] = str(self.pieces[0]["clip"].thumb)
-        d.update(fields)
-        d = drafts.save(d)
-        self.draft_id = d["id"]
-        return d
-
-    def load_draft(self, d: dict) -> bool:
-        """Open a saved draft in the Studio exactly as it was left."""
-        edit = d.get("edit", {})
-        pieces = drafts.pieces_from_json(edit.get("pieces", []), self.lib.load)
-        if not pieces:
-            QMessageBox.information(self, "Draft", "The clips in this draft were deleted or moved.")
-            return False
-        self.clear()
-        o = edit.get("opts", {})
-        self._set_opts(o, defaults=True)
-        if o.get("cam"):
-            self.cam_edit.set_config(o["cam"])
-        self.pieces = pieces
-        self.hook.blockSignals(True)
-        self.hook.setText(edit.get("hook", ""))
-        self.hook.blockSignals(False)
-        self.hook_start = edit.get("hook_start", 0.0)
-        self.hook_secs = edit.get("hook_secs", 3.0)
-        self.hook_whole = edit.get("hook_whole", False)
-        self.hook_pos = edit.get("hook_pos")
-        self.hook_scale = edit.get("hook_scale", 1.0)
-        self.hook_user = edit.get("hook_user", False)
-        self.caster_lines = [dict(c) for c in edit.get("caster", [])]
-        self.items = [dict(x) for x in edit.get("items", [])]
-        self.cam_edit.set_items(self.items)
-        self.ai_post = edit.get("ai_post")
-        self.thumb_t = edit.get("thumb_t")
-        self.set_script(edit.get("script"))
-        if self.caster_lines and not edit.get("script"):
-            self.script_lbl.setText(f"🎙 AI caster: {len(self.caster_lines)} lines (on the timeline)   ✕")
-            self.script_lbl.setVisible(True)
-        self.draft_id = d["id"] if d.get("status") != "done" else ""
-        self.draft_origin = d.get("origin", "studio")
-        self.history.reset()
-        self._autoplay_next = False
-        self._refresh_list(0)
-        self.timeline.fit()
-        self._refresh_cam_edit(frames=False)
-        self.status.setText(f"📝 Opened draft “{d.get('title', '')}”")
-        return True
-
-    def queue_render(self):
-        if not self.pieces:
-            return
-        d = self.save_draft(status="queued", queued_at=time.time())
-        if d:
-            self.queued.emit(d["id"])
-            self.status.setText("＋ Added to the render queue (Drafts page). It renders in the background — "
-                                "never while you're in a game. Press Clear all to start the next edit.")
-
-    # ----- "My style" presets
-    STYLE_OPTS = ("layout", "watermark", "music", "music_volume", "loop", "tiktok", "captions", "caption_style",
-                  "caster_duck", "caster_volume")      # the options on the right that a style remembers
-
-    def current_style(self) -> dict:
-        o = self._opts_values()
-        return {**{k: o[k] for k in self.STYLE_OPTS}, "cam": self.cam_edit.config(),
-                "hook_pos": self.hook_pos, "hook_scale": self.hook_scale,
-                "caster": bool(self.caster_lines) or self.s.caster_auto,
-                "gifs": self.s.auto_gifs, "cut_boring": self.s.auto_cut_boring, "beat_sync": True}
-
-    def apply_style(self, st: dict, name: str = ""):
-        if st.get("cam"):
-            self.cam_edit.set_config(st["cam"])
-        if "hook_pos" in st:
-            self.hook_pos = st.get("hook_pos")
-        if st.get("hook_scale"):
-            self.hook_scale = float(st["hook_scale"])
-        self._set_opts({k: st[k] for k in self.STYLE_OPTS if k in st})
-        self._refresh_cam_edit(frames=False)
-        self._style_refresh(name)
-        self._mark()
-
-    def _style_refresh(self, select: str = ""):
-        self.style_box.blockSignals(True)
-        self.style_box.clear()
-        self.style_box.addItem("(none — normal settings)", "")
-        for name in sorted(self.s.styles):
-            self.style_box.addItem(styles.label(self.s, name), name)
-        self.style_box.setCurrentIndex(max(0, self.style_box.findData(select)))
-        self.style_box.blockSignals(False)
-
-    def _style_chosen(self, i):
-        name = self.style_box.itemData(i)
-        if name and name in self.s.styles:
-            self.apply_style(self.s.styles[name], name)
-            self.status.setText(f"🎨 Style “{name}” applied")
-
-    def _style_save(self):
-        cur = self.style_box.currentData() or ""
-        name, ok = QInputDialog.getText(self, "Save style", "Name this look (e.g. 'Shorts – facecam right'):",
-                                        text=cur)
-        if not ok or not name.strip():
-            return
-        name = name.strip()
-        styles.save(self.s, name, self.current_style())
-        save_settings(self.s)
-        self._style_refresh(name)
-        self.status.setText(f"🎨 Saved style “{name}”" + (" — it's the default for automatic edits"
-                                                         if self.s.default_style == name else ""))
-
-    def _style_menu(self, btn):
-        name = self.style_box.currentData() or ""
-        m = QMenu(self)
-        game = self._game()
-        if name:
-            m.addAction("⭐ Default for all automatic edits", lambda: self._style_set(default=name))
-            if game:
-                m.addAction(f"🎮 Use for {game}", lambda: self._style_set(game=game, name=name))
-            m.addAction("💾 Update with the current look", lambda: self._style_update(name))
-            m.addAction("🗑 Delete this style", lambda: self._style_delete(name))
-        if game and game in self.s.style_by_game:
-            m.addAction(f"No special style for {game}", lambda: self._style_set(game=game, name=""))
-        if self.s.default_style:
-            m.addAction("No default style", lambda: self._style_set(default=""))
-        if m.isEmpty():
-            m.addAction("Save a style first (Save…)").setEnabled(False)
-        m.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
-
-    def _style_set(self, default=None, game=None, name=None):
-        if default is not None:
-            self.s.default_style = default
-        if game is not None:
-            styles.use_for_game(self.s, game, name)
-        save_settings(self.s)
-        self._style_refresh(self.style_box.currentData() or "")
-
-    def _style_update(self, name):
-        self.s.styles[name] = self.current_style()
-        save_settings(self.s)
-        self.status.setText(f"🎨 Updated style “{name}”")
-
-    def _style_delete(self, name):
-        styles.delete(self.s, name)
-        save_settings(self.s)
-        self._style_refresh("")
+    # drafts, styles, undo / redo and keyboard shortcuts: see ui/studio/
+    queued = Signal(str)          # a draft went into the render queue (studio/saving.py)
 
     # ----- dead air, beat sync, thumbnail
     deadReady = Signal(object)
@@ -1964,142 +1756,6 @@ class StudioPage(QWidget):
         self.timeline.update()
         self._mark()
         self.status.setText(f"🖼 The thumbnail will be made from {fmt_dur(out_t)} into the video")
-
-    # ----- undo / redo
-    @staticmethod
-    def _copy_pieces(pieces: list[dict]) -> list[dict]:
-        """Pieces that share nothing editable with the originals (the clip itself is shared)."""
-        import copy
-        return [dict(p, effects=copy.deepcopy(p.get("effects", [])),
-                     **({"alt": dict(p["alt"])} if p.get("alt") else {})) for p in pieces]
-
-    def _state(self) -> dict:
-        import copy
-        return {"pieces": self._copy_pieces(self.pieces),
-                "hook": self.hook.text(), "hook_start": self.hook_start, "hook_secs": self.hook_secs,
-                "hook_whole": self.hook_whole, "hook_pos": copy.deepcopy(self.hook_pos),
-                "hook_scale": self.hook_scale, "hook_user": getattr(self, "hook_user", False),
-                "caster": copy.deepcopy(self.caster_lines), "items": copy.deepcopy(self.items),
-                "current": self._current,
-                "thumb_t": self.thumb_t,
-                "opts": self._opts_values(strip=False) if hasattr(self, "caster_vol") else {}}
-
-    # The options on the right: (draft key, widget, kind, default). Drafts, undo steps and styles all use this
-    # one list; volumes are 0–100 on screen and 0.0–1.0 everywhere else.
-    OPTS = (("preset", "preset", "combo", "short"), ("layout", "layout_box", "combo", "blur"),
-            ("watermark", "watermark", "text", ""), ("music", "music", "text", ""),
-            ("music_volume", "music_vol", "pct", 0.18), ("loudnorm", "loud", "check", True),
-            ("captions", "captions", "check", False), ("caption_style", "cap_style", "combo", "pop3"),
-            ("loop", "loop", "check", True), ("tiktok", "tiktok", "check", True),
-            ("game_volume", "game_vol", "pct", 1.0), ("mic_volume", "mic_vol", "pct", 1.0),
-            ("caster_duck", "caster_duck", "pct", 0.7), ("caster_volume", "caster_vol", "pct", 1.0))
-
-    def _opts_values(self, strip: bool = True) -> dict:
-        out = {}
-        for key, attr, kind, _ in self.OPTS:
-            w = getattr(self, attr)
-            if kind == "combo":
-                out[key] = w.currentData()
-            elif kind == "text":
-                out[key] = w.text().strip() if strip else w.text()
-            elif kind == "pct":
-                out[key] = w.value() / 100
-            else:
-                out[key] = w.isChecked()
-        return out
-
-    def _set_opts(self, o: dict, defaults: bool = False, quiet: bool = False):
-        """Put options on screen. Missing ones keep their current value, or get their default (defaults=True).
-        quiet: no change signals (undo / redo restores without recording a new step)."""
-        for key, attr, kind, default in self.OPTS:
-            v = o.get(key)
-            if v is None or (kind == "combo" and not v):
-                if not defaults:
-                    continue
-                v = default
-            w = getattr(self, attr)
-            was = w.blockSignals(True) if quiet else None
-            if kind == "combo":
-                w.setCurrentIndex(max(0, w.findData(v)))
-            elif kind == "text":
-                w.setText(str(v))
-            elif kind == "pct":
-                w.setValue(round(float(v) * 100))
-            else:
-                w.setChecked(bool(v))
-            if quiet:
-                w.blockSignals(was)
-
-    def _watch_opts(self):
-        """Changing any option on the right is an undo step and is saved in the draft."""
-        for w in (self.preset, self.layout_box, self.cap_style):
-            w.currentIndexChanged.connect(lambda *_: self._mark())
-        for w in (self.watermark, self.music):
-            w.textChanged.connect(lambda *_: self._mark())
-        for w in (self.music_vol, self.game_vol, self.mic_vol, self.caster_duck, self.caster_vol):
-            w.valueChanged.connect(lambda *_: self._mark())
-        for w in (self.captions, self.loud, self.loop, self.tiktok):
-            w.toggled.connect(lambda *_: self._mark())
-
-    def _mark(self):
-        """Something changed: record an undo step once things settle."""
-        if hasattr(self, "_hist_timer"):
-            self._hist_timer.start()
-
-    def _commit(self):
-        if not self.history.record(self._state()):
-            return
-        self._update_undo_buttons()
-        try:
-            self.save_draft()          # every change is saved: close the app and nothing is lost
-        except Exception as e:
-            print("draft save:", e)
-
-    def _update_undo_buttons(self):
-        if hasattr(self, "undo_btn"):
-            self.undo_btn.setEnabled(self.history.can_undo)
-            self.redo_btn.setEnabled(self.history.can_redo)
-
-    def undo(self):
-        self._hist_timer.stop()
-        self._commit()                      # don't lose the very last change
-        st = self.history.undo()
-        if st is not None:
-            self._restore(st)
-            self.status.setText("Undone (Ctrl+Y to redo)")
-
-    def redo(self):
-        self._hist_timer.stop()
-        st = self.history.redo()
-        if st is not None:
-            self._restore(st)
-            self.status.setText("Redone")
-
-    def _restore(self, st: dict):
-        import copy
-        self.pieces = self._copy_pieces(st["pieces"])
-        self.hook.blockSignals(True)
-        self.hook.setText(st["hook"])
-        self.hook.blockSignals(False)
-        self.hook_start, self.hook_secs, self.hook_whole = st["hook_start"], st["hook_secs"], st["hook_whole"]
-        self.hook_pos, self.hook_scale = copy.deepcopy(st["hook_pos"]), st["hook_scale"]
-        self.hook_user = st["hook_user"]
-        self.caster_lines = copy.deepcopy(st["caster"])
-        self.items = copy.deepcopy(st.get("items", []))
-        self.cam_edit.set_items(self.items)
-        self.thumb_t = st.get("thumb_t")
-        self._set_opts(st.get("opts") or {}, quiet=True)
-        self.script_lbl.setVisible(bool(self.script) or bool(self.caster_lines))
-        if self.caster_lines and not self.script:
-            self.script_lbl.setText(f"🎙 AI caster: {len(self.caster_lines)} lines (on the timeline)   ✕")
-        self._autoplay_next = False
-        cur = st.get("current", 0)
-        self._refresh_list(min(max(0, cur if cur is not None else 0), len(self.pieces) - 1))
-        self._show_fx()
-        self._refresh_cam_edit(frames=False)
-        self.timeline.update()
-        self._hist_timer.stop()
-        self._update_undo_buttons()
 
     # ----- timeline / advanced editing
     def _advanced(self, on: bool):
