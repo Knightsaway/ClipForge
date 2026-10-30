@@ -407,7 +407,7 @@ def test_render_remembers_the_look_and_finishes_the_draft(app, studio, tmp_path)
     done = []
     studio.rendered.connect(done.append)
     with mock.patch("clipforge.drafts.render", return_value=[out, tmp_path / "Game TikTok.mp4"]) as render, \
-            mock.patch("clipforge.ui.pages.save_settings") as save:
+            mock.patch("clipforge.ui.studio.render.save_settings") as save:
         studio.render()
         assert not studio.render_btn.isEnabled() and not studio.bar.isHidden()   # busy until the result arrives
         _wait(app, lambda: done)
@@ -426,7 +426,7 @@ def test_render_remembers_the_look_and_finishes_the_draft(app, studio, tmp_path)
 def test_render_failure_is_reported_and_marked(app, studio):
     studio.load_draft(_draft(studio))
     with mock.patch("clipforge.drafts.render", side_effect=RuntimeError("encoder exploded")), \
-            mock.patch("clipforge.ui.pages.save_settings"), \
+            mock.patch("clipforge.ui.studio.render.save_settings"), \
             mock.patch("PySide6.QtWidgets.QMessageBox.warning") as warn:
         studio.render()
         _wait(app, lambda: warn.called)
