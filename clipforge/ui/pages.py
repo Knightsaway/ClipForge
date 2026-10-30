@@ -1470,9 +1470,8 @@ class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, EffectsMix
             self.list.addItem(it)
         self.list.setIconSize(QPixmap(96, 54).size())
         self.list.blockSignals(False)
-        tot = sum((p["end"] - p["start"]) / max(0.1, p.get("speed", 1.0)) +
-                  sum(e.get("dur", 1.0) * (1 / e.get("speed", 0.4) - 1) for e in p.get("effects", [])
-                      if e["type"] == "slowmo") for p in self.pieces)
+        from .. import timeline_model as tm
+        tot = tm.total(self.pieces)             # the real length: speed, slow-mo and its ramps, like the render
         warn = "  ⚠ over 60 s — shorter Shorts usually do better" if tot > 60 and self._is_short() else ""
         self.total.setText(f"Total {fmt_dur(tot)}  ·  {len(self.pieces)} pieces{warn}")
         if 0 <= select < len(self.pieces):

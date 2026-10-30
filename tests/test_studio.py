@@ -846,3 +846,13 @@ def test_trimming_on_the_timeline_updates_the_preview(studio):
     assert (studio.player.timeline.t_in, studio.player.timeline.t_out) == (1.0, 7.5)
     assert "(6.5 s)" in _rows(studio)[0]
 
+
+
+def test_total_matches_the_real_length(studio):
+    from clipforge import timeline_model as tm
+    studio.load_draft(_draft(studio))
+    studio.pieces[0]["effects"] = [{"type": "slowmo", "t": 5.0, "dur": 1.2, "speed": 0.4}]   # smooth by default
+    studio.pieces[1]["effects"] = [{"type": "slowmo", "t": 4.0, "dur": 1.2, "speed": 0.4, "smooth": False}]
+    studio._refresh_list(0)
+    from clipforge.ui.widgets import fmt_dur
+    assert f"Total {fmt_dur(tm.total(studio.pieces))}" in studio.total.text()
