@@ -460,7 +460,7 @@ def test_auto_edit_applies_the_result_and_writes_a_hook(app, studio):
     studio.load_draft(_draft(studio, hook=""))
     new = [dict(p, effects=[{"type": "zoom", "t": p["start"] + 1}]) for p in studio.pieces]
     with mock.patch("clipforge.autoedit.edit_pieces", return_value=(new, ", 1 GIF")) as edit, \
-            mock.patch("clipforge.ui.pages.suggest_hook", return_value="NO WAY"):
+            mock.patch("clipforge.ui.studio.autoedit.suggest_hook", return_value="NO WAY"):
         studio.auto_edit(montage=True)
         _wait(app, lambda: "Auto edit" in studio.status.text())
     assert edit.call_args.kwargs["montage"] is True
