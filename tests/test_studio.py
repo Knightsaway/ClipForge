@@ -439,3 +439,210 @@ def test_render_needs_clips(studio):
     with mock.patch("PySide6.QtWidgets.QMessageBox.information") as box:
         studio.render()
     box.assert_called_once()
+
+
+# ----------------------------------------------------------------------------- automatic edits
+
+def test_another_take_keeps_this_edit_and_asks_for_a_new_one(studio):
+    studio.load_draft(_draft(studio))
+    studio.pieces.append(dict(studio.pieces[0], start=12.0, end=15.0))     # same clip used twice
+    asked = []
+    studio.anotherTake.connect(asked.append)
+    studio._another_take()
+    req = asked[0]
+    assert [c.path for c in req["clips"]] == [studio.pieces[0]["clip"].path, studio.pieces[1]["clip"].path]
+    assert req["exclude"][2] == (studio.pieces[0]["clip"].path, 12.0, 15.0)
+    assert (req["preset"], req["hook"], req["origin"]) == ("short", "Watch this", "studio")
+    assert drafts.load(studio.draft_id)["status"] == "draft"               # this take waits in Drafts
+
+
+def test_auto_edit_applies_the_result_and_writes_a_hook(app, studio):
+    studio.load_draft(_draft(studio, hook=""))
+    new = [dict(p, effects=[{"type": "zoom", "t": p["start"] + 1}]) for p in studio.pieces]
+    with mock.patch("clipforge.autoedit.edit_pieces", return_value=(new, ", 1 GIF")) as edit, \
+            mock.patch("clipforge.ui.pages.suggest_hook", return_value="NO WAY"):
+        studio.auto_edit(montage=True)
+        _wait(app, lambda: "Auto edit" in studio.status.text())
+    assert edit.call_args.kwargs["montage"] is True
+    assert studio.pieces is new and studio.hook.text() == "NO WAY"
+    assert studio.status.text().startswith("✨ Auto edit: 2 effects, 1 GIF.")
+
+
+def test_auto_edit_problem_keeps_the_clips_and_can_render_after(app, studio):
+    studio.load_draft(_draft(studio))
+    before = [(p["start"], p["end"]) for p in studio.pieces]
+    studio.render = mock.Mock()
+    with mock.patch("clipforge.autoedit.edit_pieces", side_effect=RuntimeError("no vision")):
+        studio.auto_edit(then_render=True)
+        _wait(app, lambda: studio.render.called)
+    assert [(p["start"], p["end"]) for p in studio.pieces] == before
+
+
+def test_auto_edit_hands_over_to_the_caster(app, studio):
+    studio.load_draft(_draft(studio))
+    studio.s.caster_auto = True
+    studio._caster = mock.Mock()
+    with mock.patch("clipforge.autoedit.edit_pieces", side_effect=lambda snap, *a, **k: (snap, "")):
+        studio.auto_edit(then_render=True)
+        _wait(app, lambda: studio._caster.called)
+    assert studio._render_after_caster is True and "caster is writing" in studio.status.text()
+
+
+# ----------------------------------------------------------------------------- AI caster and AI writer
+
+LINES = [{"t": 1.2, "text": "What a shot!", "wav": "a.wav", "dur": 1.0},
+         {"t": 6.0, "text": "Unreal.", "wav": "b.wav", "dur": 0.8}]
+
+
+def test_caster_writes_lines(app, studio):
+    studio.load_draft(_draft(studio, caster=[]))
+    with mock.patch("clipforge.commentator.available", return_value="windows"), \
+            mock.patch("clipforge.commentator.build_lines", return_value=[dict(x) for x in LINES]) as build:
+        studio._caster()
+        assert not studio.caster_btn.isEnabled()
+        _wait(app, lambda: studio.caster_btn.isEnabled())
+    assert studio.caster_lines == LINES and not studio.script_lbl.isHidden()
+    assert "2 lines" in studio.script_lbl.text() and "What a shot!" in studio.status.text()
+    pieces = build.call_args[0][0]
+    assert [(p.start, p.end, p.speed) for p in pieces] == [(1.0, 9.0, 1.0), (2.0, 6.0, 1.5)]
+
+
+def test_caster_reacts_to_new_effects_and_keeps_gifs(studio):
+    studio.load_draft(_draft(studio))
+    gif = {"type": "gif", "t": 2.0, "path": "g.gif"}
+    studio.pieces[0]["effects"].append(gif)
+    studio._caster_done({"caster_lines": LINES, "fx": [[{"type": "zoom", "t": 5.0}], []]})
+    assert studio.pieces[0]["effects"] == [{"type": "zoom", "t": 5.0}, gif] and studio.pieces[1]["effects"] == []
+
+
+def test_caster_without_lines_warns_and_still_renders_when_asked(studio):
+    studio.load_draft(_draft(studio))
+    studio.render = mock.Mock()
+    studio._render_after_caster = True
+    with mock.patch("PySide6.QtWidgets.QMessageBox.warning") as warn:
+        studio._caster_done({"caster_lines": []})
+    assert "no exciting moments" in warn.call_args[0][2]
+    studio.render.assert_called_once()
+    assert studio.caster_btn.isEnabled() and studio._render_after_caster is False
+
+
+def test_caster_needs_clips_and_a_voice(studio):
+    with mock.patch("PySide6.QtWidgets.QMessageBox.information") as box:
+        studio._caster()
+        studio.load_draft(_draft(studio))
+        with mock.patch("clipforge.commentator.available", return_value=""):
+            studio._caster()
+    assert box.call_count == 2 and studio.caster_btn.isEnabled()
+
+
+def test_reword_a_caster_line(app, studio):
+    studio.load_draft(_draft(studio, caster=[dict(x) for x in LINES]))
+    with mock.patch("PySide6.QtWidgets.QInputDialog.getText", return_value=("Clean!", True)), \
+            mock.patch("clipforge.commentator.speak_line", return_value=("c.wav", 0.6)):
+        studio._caster_reword(1)
+        _wait(app, lambda: studio.caster_lines[1]["text"] == "Clean!")
+    assert studio.caster_lines[1] == {"t": 6.0, "text": "Clean!", "wav": "c.wav", "dur": 0.6}
+    with mock.patch("PySide6.QtWidgets.QInputDialog.getText", return_value=("What a shot!", True)), \
+            mock.patch("clipforge.commentator.speak_line") as speak:
+        studio._caster_reword(0)                               # same words: nothing to record
+        studio._caster_reword(5)                               # no such line
+    speak.assert_not_called()
+    studio._line_done({"k": 0, "text": "x", "wav": "", "dur": 0})
+    assert "couldn't say" in studio.status.text() and studio.caster_lines[0]["text"] == "What a shot!"
+    studio._drop_voice()
+    assert studio.caster_lines == []
+
+
+def test_ai_writer_cycles_hooks_it_already_has(studio):
+    studio.load_draft(_draft(studio))
+    studio.ai_post = {"hooks": ["A", "B", "C"]}
+    studio.hook.setText("B")
+    studio._ai_hooks()
+    assert studio.hook.text() == "C"
+    studio._ai_hooks()
+    assert studio.hook.text() == "A"
+    studio.hook.setText("mine")
+    studio._ai_hooks()
+    assert studio.hook.text() == "A"
+
+
+def test_ai_writer_asks_the_model(app, studio):
+    studio.load_draft(_draft(studio, ai_post=None))
+    post = {"title": "Clutch of the year", "hooks": ["1v4?!", "No way"]}
+    with mock.patch("clipforge.ai.write_post", return_value=post), mock.patch("clipforge.ai.clip_context"), \
+            mock.patch("clipforge.analytics.winning_hooks", return_value=[]):
+        studio._ai_hooks()
+        _wait(app, lambda: studio.ai_btn.isEnabled())
+    assert studio.ai_post is post and studio.hook.text() == "1v4?!" and "Clutch of the year" in studio.status.text()
+    studio.ai_post = None
+    with mock.patch("clipforge.ai.write_post", side_effect=RuntimeError("Ollama isn't running")), \
+            mock.patch("clipforge.ai.clip_context"), mock.patch("clipforge.analytics.winning_hooks", return_value=[]):
+        studio._ai_hooks()
+        _wait(app, lambda: studio.ai_btn.isEnabled())
+    assert "AI not available: Ollama isn't running" in studio.status.text() and studio.hook.text() == "1v4?!"
+
+
+# ----------------------------------------------------------------------------- friend's angle
+
+def test_friends_angle_split_and_replay(studio):
+    studio.load_draft(_draft(studio))
+    squad = Path(studio.s.library_dir).parent / "squad"
+    (squad / "Sam" / "clips").mkdir(parents=True)
+    (squad / "Sam" / "clips" / "x.mp4").write_bytes(b"x")
+    friend = studio.lib.load(squad / "Sam" / "clips" / "x.mp4")
+    friend.duration = 20.0
+    studio.s.squad_dir, studio.s.squad_name = str(squad), "Me"
+    pc = studio.pieces[0]
+    studio._aligned((pc, friend, "split", 1.5, 0.8))
+    assert pc["alt"] == {"path": friend.path, "offset": 1.5, "label": "Me", "alt_label": "Sam"}
+    assert "synced by audio (80%)" in studio.status.text()
+    studio._aligned((pc, friend, "replay", 1.5, 0.1))
+    rp = studio.pieces[1]
+    assert (rp["clip"], rp["start"], rp["end"]) == (friend, 2.5, 10.5)
+    assert rp["effects"] == [{"type": "sfx", "t": 2.55, "name": "whoosh"}] and "by clock" in studio.status.text()
+    gone = dict(pc, start=99.0)
+    studio._aligned((gone, friend, "replay", 0.0, 1.0))         # the piece was removed meanwhile
+    assert len(studio.pieces) == 3
+
+
+# ----------------------------------------------------------------------------- dead air and beat sync
+
+def _key(pc):
+    return (pc["clip"].path, round(pc["start"], 2), round(pc["end"], 2))
+
+
+def test_dead_air_scan_results_and_cutting_it(studio):
+    studio.load_draft(_draft(studio))
+    p0, p1 = studio.pieces
+    studio.music_scores[_key(p1)] = 0.6
+    studio._dead_done({_key(p0): [(3.0, 5.0)], _key(p1): []})
+    studio._dead_timer.stop()
+    assert not studio.music_warn.isHidden() and "Clip 2 seem" in studio.music_warn.text()
+    assert studio.boring_btn.text() == "✂ Cut boring parts (1)"
+    assert studio.dead_for(p0) == [(3.0, 5.0)]
+    studio._cut_boring()
+    assert [(p["start"], p["end"]) for p in studio.pieces] == [(1.0, 3.0), (5.0, 9.0), (2.0, 6.0)]
+    assert "Cut 2.0 s of dead air" in studio.status.text()
+    studio._cut_boring()                                       # nothing left to cut
+    assert "No boring parts" in studio.status.text() and len(studio.pieces) == 3
+
+
+def test_beat_sync_moves_cuts_and_effects_onto_beats(studio):
+    studio.load_draft(_draft(studio))
+    studio._beats_done([k * 0.55 for k in range(40)])          # ~109 BPM
+    p0, p1 = studio.pieces
+    assert p0["end"] == pytest.approx(9.25)                    # cut at 8.0 s moves to the beat at 8.25 s
+    assert p0["effects"][0]["t"] == pytest.approx(3.2)         # zoom at 2.0 s into the video → beat at 2.2 s
+    assert (p1["start"], p1["end"]) == (2.0, 6.0)              # the last clip's end isn't a cut
+    assert "Synced 2 cuts / effects" in studio.status.text() and "109 BPM" in studio.status.text()
+    studio._beats_done([0.5, 1.0])
+    assert "Couldn't find a steady beat" in studio.status.text()
+
+
+def test_beat_sync_needs_music(studio):
+    studio.load_draft(_draft(studio))
+    with mock.patch("PySide6.QtWidgets.QMessageBox.information") as box:
+        studio._beat_sync(quiet=True)
+        box.assert_not_called()
+        studio._beat_sync()
+    box.assert_called_once()
