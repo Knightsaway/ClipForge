@@ -53,6 +53,9 @@ def all_drafts() -> list[dict]:
         for f in DIR.glob("*.json"):
             try:
                 out.append(json.loads(f.read_text(encoding="utf-8")))
+            except ValueError as e:      # damaged: keep it aside (and say so) instead of hiding it silently
+                from .config import keep_damaged
+                keep_damaged(f, str(e))
             except Exception:
                 continue
     return sorted(out, key=lambda d: d.get("updated", 0), reverse=True)

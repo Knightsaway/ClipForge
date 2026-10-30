@@ -67,3 +67,44 @@ def test_wrong_types_are_ignored(tmp_path: Path):
     assert s.hotkeys.marker == "End"
     assert s.hotkeys.save_clip == d.hotkeys.save_clip
     assert settings.exists()          # readable file is never moved
+
+
+def test_damaged_clip_sidecar_is_kept(tmp_path: Path):
+    from clipforge import library
+    root = tmp_path / "lib"
+    (root / "Game").mkdir(parents=True)
+    vid = root / "Game" / "clip.mp4"
+    vid.write_bytes(b"x")
+    vid.with_suffix(".json").write_text('{"favorite": tr', encoding="utf-8")
+    with mock.patch.object(config, "app_data_dir", lambda: tmp_path), \
+         mock.patch.object(library.ff, "duration", lambda p: 10.0), \
+         mock.patch.object(library, "_video_tracks", lambda p: 1):
+        library.Library(root).load(vid)
+    kept = list((root / "Game").glob("clip.json.damaged-*"))
+    assert len(kept) == 1 and kept[0].read_text(encoding="utf-8") == '{"favorite": tr'
+
+
+def test_damaged_sidecar_outside_library_is_left_alone(tmp_path: Path):
+    from clipforge import library
+    shared = tmp_path / "squad" / "friend" / "clips"
+    shared.mkdir(parents=True)
+    vid = shared / "clip.mp4"
+    vid.write_bytes(b"x")
+    vid.with_suffix(".json").write_text("{oops", encoding="utf-8")
+    with mock.patch.object(config, "app_data_dir", lambda: tmp_path), \
+         mock.patch.object(library.ff, "duration", lambda p: 0.0), \
+         mock.patch.object(library, "_video_tracks", lambda p: 1):
+        library.Library(tmp_path / "lib").load(vid)
+    assert not list(shared.glob("*.damaged-*"))   # shared/synced folders never get extra files from us
+
+
+def test_damaged_draft_is_kept_and_others_listed(tmp_path: Path):
+    from clipforge import drafts
+    d = tmp_path / "drafts"
+    with mock.patch.object(drafts, "DIR", d), mock.patch.object(config, "app_data_dir", lambda: tmp_path):
+        good = drafts.save({"title": "ok"})
+        (d / "bad.json").write_text("{", encoding="utf-8")
+        listed = drafts.all_drafts()
+        assert [x["id"] for x in listed] == [good["id"]]
+        assert list(d.glob("bad.json.damaged-*"))
+        assert drafts.all_drafts() == listed       # nothing left to complain about

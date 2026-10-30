@@ -178,7 +178,7 @@ class Settings:
 SETTINGS_FILE = app_data_dir() / "settings.json"
 
 
-def _keep_damaged(path: Path, why: str) -> None:
+def keep_damaged(path: Path, why: str) -> None:
     """Move an unreadable file aside so the next save can't overwrite what the user had."""
     keep = path.with_name(f"{path.name}.damaged-{time.strftime('%Y%m%d-%H%M%S')}")
     try:
@@ -207,7 +207,7 @@ def load_settings() -> Settings:
                 raise ValueError("not a JSON object")
         except (OSError, UnicodeDecodeError, ValueError) as e:
             if not isinstance(e, OSError):          # locked/unreadable: leave it alone, it may be fine
-                _keep_damaged(SETTINGS_FILE, str(e) or type(e).__name__)
+                keep_damaged(SETTINGS_FILE, str(e) or type(e).__name__)
             data = None
     if data is None:
         from . import secrets_store
