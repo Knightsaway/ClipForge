@@ -751,7 +751,33 @@ class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, EffectsMix
         split = QSplitter(Qt.Horizontal)
         lay.addWidget(split)
 
-        # left: the cut list
+        split.addWidget(self._build_clip_list())
+        split.addWidget(self._build_preview())
+        split.addWidget(self._build_options())
+        split.setSizes([280, 760, 360])
+        self._advanced(s.studio_advanced)
+
+        jobs.progress.connect(self._progress)
+        jobs.done.connect(self._done)
+        jobs.failed.connect(self._failed)
+        self.aiReady.connect(self._ai_done)
+        self.casterReady.connect(self._caster_done)
+        self.lineReady.connect(self._line_done)
+        self.deadReady.connect(self._dead_done)
+        self._dead_timer = QTimer(self)
+        self._dead_timer.setSingleShot(True)
+        self._dead_timer.setInterval(900)
+        self._dead_timer.timeout.connect(self._scan_dead)
+        self._style_refresh(s.default_style)
+        self._watch_opts()
+        self._shortcuts()
+        self.alignReady.connect(self._aligned)
+        self.ai_post = None
+        self._preset_changed()
+
+    def _build_clip_list(self) -> QWidget:
+        """Left: the cut list (with what to do when it's empty)."""
+        s = self.s
         left = QWidget()
         l = QVBoxLayout(left)
         l.setContentsMargins(0, 0, 0, 0)
@@ -815,9 +841,11 @@ class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, EffectsMix
         self.total = QLabel("Total 00:00")
         self.total.setObjectName("h2")
         l.addWidget(self.total)
-        split.addWidget(left)
+        return left
 
-        # middle: preview  |  webcam placement
+    def _build_preview(self) -> QWidget:
+        """Middle: the preview and the final-look tab, the timeline and its toolbar."""
+        s = self.s
         self.player = PlayerPanel()
         self.player.rangeChanged.connect(self._range)
         from .camedit import CamEditor
@@ -904,13 +932,32 @@ class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, EffectsMix
         self.cam_edit.playhead_out = lambda: self.timeline.playhead
         self.cam_edit.set_items(self.items)
         self.timeline.itemSelected.connect(self._timeline_item)
-        split.addWidget(mid)
+        return mid
 
-        # right: export options
+    def _build_options(self) -> QWidget:
+        """Right: the export options (they scroll), with status and Render always visible underneath."""
         right = QFrame()
         right.setObjectName("panel")
         right.setMinimumWidth(330)
         r = QVBoxLayout(right)
+        self._build_look(r)
+        self._build_caster_controls(r)
+
+        r.addWidget(self._build_effects_box())
+        self.script_lbl = QPushButton("")
+        self.script_lbl.setObjectName("icon")
+        self.script_lbl.setStyleSheet(f"color:{theme.YELLOW}; text-align:left; font-size:12px;")
+        self.script_lbl.setToolTip("Click to drop the voiceover and go back to a normal edit")
+        self.script_lbl.clicked.connect(self._drop_voice)
+        self.script_lbl.setVisible(False)
+        r.addWidget(self.script_lbl)
+        self.script: dict | None = None
+        r.addStretch(1)
+        return self._build_render_column(right)
+
+    def _build_look(self, r: QVBoxLayout):
+        """Style, format, layout, hook, watermark, music, volumes, captions."""
+        s = self.s
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignLeft)
         self.preset = QComboBox()
@@ -1017,6 +1064,10 @@ class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, EffectsMix
         self.tiktok.setChecked(s.tiktok_versions)
         r.addWidget(self.loop)
         r.addWidget(self.tiktok)
+
+    def _build_caster_controls(self, r: QVBoxLayout):
+        """The AI caster button and its two volumes."""
+        s = self.s
         self.caster_btn = QPushButton("🎙  Add AI caster voice")
         self.caster_btn.setToolTip("A hyped esports caster reacts to each big moment (game sound ducks under it)")
         self.caster_btn.clicked.connect(self._caster)
@@ -1046,6 +1097,8 @@ class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, EffectsMix
         cv_row.addWidget(self.caster_vol)
         r.addLayout(cv_row)
 
+    def _build_effects_box(self) -> QGroupBox:
+        """Effects on the selected piece: speed, zoom, slow-mo, sounds, text / blur / mute, transition, GIFs."""
         fxg = QGroupBox("Effects on the selected piece")
         fv = QVBoxLayout(fxg)
         srow = QHBoxLayout()
@@ -1120,16 +1173,10 @@ class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, EffectsMix
         self.friend_btn.setToolTip("Find a squad member's clip of the same moment: split-screen or replay")
         self.friend_btn.clicked.connect(self._friend_angle)
         fv.addWidget(self.friend_btn)
-        r.addWidget(fxg)
-        self.script_lbl = QPushButton("")
-        self.script_lbl.setObjectName("icon")
-        self.script_lbl.setStyleSheet(f"color:{theme.YELLOW}; text-align:left; font-size:12px;")
-        self.script_lbl.setToolTip("Click to drop the voiceover and go back to a normal edit")
-        self.script_lbl.clicked.connect(self._drop_voice)
-        self.script_lbl.setVisible(False)
-        r.addWidget(self.script_lbl)
-        self.script: dict | None = None
-        r.addStretch(1)
+        return fxg
+
+    def _build_render_column(self, right: QFrame) -> QWidget:
+        """The options in a scroll area, then status, progress, Try another edit, Render and Queue."""
         self.status = QLabel("")
         self.status.setObjectName("muted")
         self.status.setWordWrap(True)
@@ -1165,27 +1212,7 @@ class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, EffectsMix
         rrow.addWidget(self.queue_btn)
         rc.addLayout(rrow)
         right_col.setMinimumWidth(350)
-        split.addWidget(right_col)
-        split.setSizes([280, 760, 360])
-        self._advanced(s.studio_advanced)
-
-        jobs.progress.connect(self._progress)
-        jobs.done.connect(self._done)
-        jobs.failed.connect(self._failed)
-        self.aiReady.connect(self._ai_done)
-        self.casterReady.connect(self._caster_done)
-        self.lineReady.connect(self._line_done)
-        self.deadReady.connect(self._dead_done)
-        self._dead_timer = QTimer(self)
-        self._dead_timer.setSingleShot(True)
-        self._dead_timer.setInterval(900)
-        self._dead_timer.timeout.connect(self._scan_dead)
-        self._style_refresh(s.default_style)
-        self._watch_opts()
-        self._shortcuts()
-        self.alignReady.connect(self._aligned)
-        self.ai_post = None
-        self._preset_changed()
+        return right_col
 
     def all_clips(self) -> list:
         return []   # replaced by the main window (library clips incl. squad folders)
