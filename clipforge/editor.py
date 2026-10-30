@@ -96,8 +96,13 @@ def expand_speed(pieces: list[Piece]) -> list[Piece]:
             smooth_before = smooth
         if p.end - cur > 0.15 or not out or out[-1].path != p.path:
             out.append(_sub(p, cur, p.end, p.speed, fx_in(cur, p.end, last=True), fade_in=not smooth_before))
-        elif out and smooth_before:
-            out[-1].fade_out = True
+        else:
+            last = out[-1]
+            if cur > p.start:                          # the tiny rest after a slow-mo is dropped: keep its effects
+                last.effects = last.effects + [dict(x, t=min(x["t"], last.end)) for x in others
+                                               if cur <= x["t"] <= p.end]
+            if smooth_before:
+                last.fade_out = True
     return out
 
 
