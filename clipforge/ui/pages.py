@@ -23,8 +23,8 @@ from ..highlights import find_moments
 from ..library import Clip, Library
 from . import theme
 from .player import PlayerPanel
-from .studio import (DraftMixin, EffectsMixin, HistoryMixin, KeyboardMixin, OverlayMixin, RenderMixin,
-                     StyleMixin)
+from .studio import (AIMixin, AutoEditMixin, DraftMixin, EffectsMixin, HistoryMixin, KeyboardMixin, OverlayMixin,
+                     RenderMixin, SquadMixin, StyleMixin)
 from .widgets import ClipCard, HotkeyEdit, day_label, fmt_dur
 
 
@@ -707,9 +707,20 @@ class ClipPicker(QDialog):
 
 # ====================================================================== studio
 class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, EffectsMixin, OverlayMixin, RenderMixin,
-                 QWidget):
+                 AIMixin, AutoEditMixin, SquadMixin, QWidget):
     rendered = Signal(object)
     anotherTake = Signal(dict)     # "Try another edit": the main window makes it in the background
+    # Results of background work, delivered on the UI thread. They're used by the parts in ui/studio/ but declared
+    # here, on the QWidget: signals on a plain mixin class are only known to work on newer PySide6 (checked: 6.12).
+    aiReady = Signal(object)        # studio/ai.py: titles and hooks from the AI writer
+    casterReady = Signal(object)    # studio/ai.py: the caster's lines
+    lineReady = Signal(object)      # studio/ai.py: a re-worded caster line
+    alignReady = Signal(object)     # studio/squad.py: a friend's angle lined up
+    autoEditReady = Signal(object)  # studio/autoedit.py
+    deadReady = Signal(object)      # studio/autoedit.py: dead air and music found
+    beatsReady = Signal(object)     # studio/autoedit.py
+    bleepReady = Signal(object)     # studio/overlays.py: swear words found
+    queued = Signal(str)            # studio/saving.py: a draft went into the render queue
 
     def __init__(self, s: Settings, lib: Library, jobs: Jobs):
         super().__init__()
@@ -1176,168 +1187,11 @@ class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, EffectsMix
         self.ai_post = None
         self._preset_changed()
 
-    aiReady = Signal(object)
-    alignReady = Signal(object)
-
     def all_clips(self) -> list:
         return []   # replaced by the main window (library clips incl. squad folders)
 
-    def owner(self, clip) -> str:
-        """Whose recording a clip is: squad clips live in <squad>/<name>/clips/."""
-        p = clip.p
-        if p.parent.name == "clips" and self.s.squad_dir and str(p).startswith(str(Path(self.s.squad_dir))):
-            return p.parent.parent.name
-        return self.s.squad_name or "Me"
-
-    def _friend_angle(self):
-        from ..squad import same_moment
-        pc = self._cur()
-        if not pc:
-            QMessageBox.information(self, "Friend's angle", "Select a piece first.")
-            return
-        mine = pc["clip"]
-        cands = [c for c in self.all_clips() if c.path != mine.path and self.owner(c) != self.owner(mine)
-                 and same_moment(mine, c)]
-        if not cands:
-            QMessageBox.information(self, "Friend's angle", "No squad clips of this moment yet.\n\n"
-                                    "Set up Settings → Squad with your friends; when anyone presses Marker, "
-                                    "everyone's angle is saved and shows up here.")
-            return
-        m = QMenu(self)
-        for c in cands[:8]:
-            who = self.owner(c)
-            m.addAction(f"Split-screen with {who}", lambda c=c: self._align(pc, c, "split"))
-            m.addAction(f"Replay from {who}'s view after this", lambda c=c: self._align(pc, c, "replay"))
-        m.exec(self.friend_btn.mapToGlobal(self.friend_btn.rect().bottomLeft()))
-
-    def _align(self, pc: dict, other, mode: str):
-        from ..squad import align
-        mine = pc["clip"]
-        self.status.setText("👥 Lining up the two angles (audio sync)…")
-
-        def work():
-            off, conf = align(mine.path, mine.created, other.path, other.created)
-            self.alignReady.emit((pc, other, mode, off, conf))
-        threading.Thread(target=work, daemon=True).start()
-
-    def _aligned(self, res):
-        pc, other, mode, off, conf = res
-        if pc not in self.pieces:
-            return
-        sync = f"synced by audio ({conf:.0%})" if conf >= 0.25 else "synced by clock (audio match was weak)"
-        if mode == "split":
-            pc["alt"] = {"path": other.path, "offset": off, "label": self.owner(pc["clip"]),
-                         "alt_label": self.owner(other)}
-            self.status.setText(f"👥 Split-screen with {self.owner(other)} — {sync}")
-        else:
-            a = max(0.0, pc["start"] + off)
-            b = min(other.duration, pc["end"] + off)
-            i = self.pieces.index(pc)
-            fx = [{"type": "sfx", "t": a + 0.05, "name": "whoosh"}]
-            self.pieces.insert(i + 1, {"clip": other, "start": a, "end": b, "effects": fx, "speed": 1.0})
-            self.status.setText(f"👥 Added {self.owner(other)}'s view as a replay — {sync}")
-        self._refresh_list(self._current)
-
     def hook_weights(self) -> dict:
         return {}   # replaced by the main window with what's learned from your channel
-
-    def _ai_hooks(self):
-        post = getattr(self, "ai_post", None)
-        if post and post.get("hooks"):          # cycle through the hooks we already have
-            hooks = post["hooks"]
-            cur = self.hook.text()
-            self.hook.setText(hooks[(hooks.index(cur) + 1) % len(hooks)] if cur in hooks else hooks[0])
-            return
-        if not self.pieces:
-            return
-        from .. import ai
-        clips = [p["clip"] for p in self.pieces]
-        vertical = PRESETS[self.preset.currentData()].vertical
-        self.ai_btn.setEnabled(False)
-        self.status.setText("🤖 Writing…")
-
-        def work():
-            try:
-                from ..analytics import winning_hooks
-                res = ai.write_post(self._game(), ai.clip_context(clips), vertical, self.s.ai_model,
-                                    winning_hooks(getattr(self, "queue_items", lambda: [])()))
-            except Exception as e:
-                res = {"error": str(e)}
-            self.aiReady.emit(res)
-        threading.Thread(target=work, daemon=True).start()
-
-    casterReady = Signal(object)
-
-    def _caster(self):
-        if not self.pieces:
-            QMessageBox.information(self, "AI caster", "Add some clips first (＋ Add clips).")
-            return
-        from .. import commentator
-        if not commentator.available():
-            QMessageBox.information(self, "AI caster", "No voice engine found. Run setup.bat and say yes to the "
-                                    "caster voice step (or use Windows' built-in voice).")
-            return
-        self.caster_btn.setEnabled(False)
-        self.caster_btn.setText("🎙  The caster is watching your clips…")
-        self.status.setText("🎙 Finding the big moments and writing lines…")
-        game = self._game()
-        snapshot = [dict(p, effects=[dict(e) for e in p.get("effects", [])]) for p in self.pieces]
-
-        def work():
-            import tempfile
-            try:
-                new_fx = None
-                if not any(e["type"] in ("zoom", "slowmo") for p in snapshot for e in p["effects"]):
-                    new_fx, _ = self._auto_fx_for(snapshot)       # react to kills/markers or loud moments
-                    for p, fx in zip(snapshot, new_fx):
-                        p["effects"] = fx
-                pieces = [Piece(p["clip"].path, p["start"], p["end"], speed=p.get("speed", 1.0),
-                                effects=p["effects"]) for p in snapshot]
-                lines = commentator.build_lines(pieces, game, Path(tempfile.mkdtemp(prefix="caster_")),
-                                                self.s.ai_enabled, self.s.ai_model, self.s.caster_voice)
-                self.casterReady.emit({"caster_lines": lines, "fx": new_fx})
-            except Exception as e:
-                self.casterReady.emit({"error": str(e)})
-        threading.Thread(target=work, daemon=True).start()
-
-    def _caster_done(self, res):
-        self.caster_btn.setEnabled(True)
-        self.caster_btn.setText("🎙  Add AI caster voice")
-        if res.get("fx") and len(res["fx"]) == len(self.pieces):
-            for pc, fx in zip(self.pieces, res["fx"]):    # the zooms the caster reacts to
-                pc["effects"] = fx + [e for e in pc["effects"] if e.get("type") == "gif"]
-            self._show_fx()
-            self._refresh_list(max(0, self._current))
-        lines = res.get("caster_lines") or []
-        if res.get("error") or not lines:
-            why = res.get("error") or ("no exciting moments were found to react to — add a Zoom or Slow-mo "
-                                       "at the moments you want commented, then try again")
-            self.status.setText("🎙 Caster failed")
-            QMessageBox.warning(self, "AI caster", f"The caster couldn't make a voice track:\n\n{why}")
-            if getattr(self, "_render_after_caster", False):
-                self._render_after_caster = False
-                self.render()
-            return
-        self.caster_lines = lines
-        self.script_lbl.setText(f"🎙 AI caster: {len(lines)} lines (on the timeline)   ✕")
-        self.script_lbl.setVisible(True)
-        self.timeline.update()
-        self.status.setText(f"🎙 Caster added {len(lines)} line{'s' if len(lines) != 1 else ''}: "
-                            + " · ".join(f"“{l['text']}”" for l in lines[:3]) + ("…" if len(lines) > 3 else "")
-                            + "  — move, re-word or delete them on the 🎙 track")
-        if getattr(self, "_render_after_caster", False):
-            self._render_after_caster = False
-            self.render()
-
-    def _ai_done(self, res):
-        self.ai_btn.setEnabled(True)
-        if "error" in res:
-            self.status.setText(f"AI not available: {res['error'][:120]}")
-            return
-        self.ai_post = res
-        if res.get("hooks"):
-            self.hook.setText(res["hooks"][0])
-        self.status.setText(f"🤖 Title: {res.get('title', '')}")
 
     # ----- pieces
     def _game(self) -> str:
@@ -1387,205 +1241,10 @@ class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, EffectsMix
     def _cur(self) -> dict | None:
         return self.pieces[self._current] if 0 <= self._current < len(self.pieces) else None
 
-    autoEditReady = Signal(object)
+    # drafts, styles, undo / redo, shortcuts, effects, text / blur / mutes, rendering, the AI caster and writer,
+    # automatic edits and friend's angle: see ui/studio/
 
-    def _another_take(self):
-        if not self.pieces:
-            self.status.setText("Add some clips first — then 🎲 makes a different take of them.")
-            return
-        self.save_draft()                       # keep this one: it waits in Drafts next to the new take
-        clips, seen = [], set()
-        for p in self.pieces:
-            if p["clip"].path not in seen:
-                seen.add(p["clip"].path)
-                clips.append(p["clip"])
-        self.anotherTake.emit({
-            "clips": clips, "origin": self.draft_origin or "auto", "preset": self.preset.currentData(),
-            "exclude": [(p["clip"].path, p["start"], p["end"]) for p in self.pieces], "hook": self.hook.text()})
-        self.status.setText("🎲 Making another take in the background — it shows up on the left when it's ready. "
-                            "This edit is saved in Drafts.")
-
-    def auto_edit(self, add_fx: bool = True, montage: bool = False, then_render: bool = False):
-        """The automatic edit, done inside the Studio so you can change anything before rendering:
-        effects on the big moments, a few small GIFs (if allowed), the hook text and the AI caster."""
-        if not self.pieces:
-            return
-        if not getattr(self, "_auto_wired", False):
-            self._auto_wired = True
-            self.autoEditReady.connect(self._auto_edit_done)
-        from ..styles import style_for, style_name_for
-        st_name = style_name_for(self.s, self._game())
-        style = style_for(self.s, self._game())
-        if style:
-            self.apply_style(style, st_name)
-        vertical = PRESETS[self.preset.currentData()].vertical
-        snapshot = [dict(p, effects=[dict(e) for e in p.get("effects", [])]) for p in self.pieces]
-        s = self.s
-        use_gifs = style.get("gifs", s.auto_gifs) if style else s.auto_gifs
-        cut = montage and (style.get("cut_boring", s.auto_cut_boring) if style else s.auto_cut_boring)
-        self.status.setText("✨ Auto-editing: " + ("cutting dead air, " if cut else "") + "effects" +
-                            (", GIFs" if use_gifs else "") + (", caster" if s.caster_auto else "") + "…")
-
-        def work():
-            try:
-                from ..autoedit import edit_pieces
-                new, note = edit_pieces(snapshot, s, style, montage=montage, add_fx=add_fx, vertical=vertical)
-            except Exception as e:
-                new, note = snapshot, f" (auto edit problem: {e})"
-            self.autoEditReady.emit({"pieces": new, "note": note, "render": then_render})
-        threading.Thread(target=work, daemon=True).start()
-
-    def _auto_edit_done(self, res):
-        new = res["pieces"]
-        if new:
-            self.pieces = new
-        if self.music.text().strip() and (self.current_style().get("beat_sync", True)):
-            self._beat_sync(quiet=True)
-        if not self.hook.text().strip() and self._is_short() and not self.script:
-            self.hook.setText(suggest_hook(self._game(), self.hook_weights()))
-        self._refresh_list(max(0, self._current))
-        self._show_fx()
-        n_fx = sum(1 for p in self.pieces for e in p["effects"] if e.get("type") != "gif")
-        msg = f"✨ Auto edit: {n_fx} effects{res['note']}."
-        if self.s.caster_auto:
-            self._render_after_caster = res["render"]
-            self._caster()
-            msg += " The caster is writing his lines…"
-        elif res["render"]:
-            self.render()
-            return
-        self.status.setText(msg + " Check it on the timeline, change anything, then press Render video.")
-
-    bleepReady = Signal(object)
-
-    # drafts, styles, undo / redo, shortcuts, effects, text / blur / mutes and rendering: see ui/studio/
-    queued = Signal(str)          # a draft went into the render queue (studio/saving.py)
-
-    # ----- dead air, beat sync, thumbnail
-    deadReady = Signal(object)
-
-    def _scan_dead(self):
-        """Finds the boring stretches of every piece in the background (shown red on the timeline)."""
-        todo = []
-        for p in self.pieces:
-            key = (p["clip"].path, round(p["start"], 2), round(p["end"], 2))
-            if key not in self.dead:
-                ev = tuple(sorted({round(e["t"], 1) for e in p["clip"].events} | set(p["clip"].markers)))
-                todo.append((key, ev))
-        if not todo or getattr(self, "_dead_busy", False):
-            return
-        self._dead_busy = True
-
-        def work():
-            from ..analysis import dead_spans, music_score
-            out = {}
-            for key, ev in todo:
-                try:
-                    out[key] = dead_spans(key[0], key[1], key[2], ev)
-                except Exception:
-                    out[key] = []
-                try:   # game music in the clip = Content ID risk
-                    self.music_scores[key] = music_score(key[0], key[1], key[2])
-                except Exception:
-                    self.music_scores[key] = 0.0
-            self.deadReady.emit(out)
-        threading.Thread(target=work, daemon=True).start()
-
-    def _dead_done(self, res):
-        self._dead_busy = False
-        self.dead.update(res)
-        flagged = [i + 1 for i, p in enumerate(self.pieces)
-                   if self.music_scores.get((p["clip"].path, round(p["start"], 2), round(p["end"], 2)), 0) >= 0.55]
-        self.music_warn.setText(f"⚠ Clip{'s' if len(flagged) > 1 else ''} {', '.join(map(str, flagged))} seem to have "
-                                "music in the game sound — YouTube may claim the video (Content ID). Turn Game volume "
-                                "down and use music from your own folder." if flagged else "")
-        self.music_warn.setVisible(bool(flagged))
-        n = sum(1 for p in self.pieces
-                if self.dead.get((p["clip"].path, round(p["start"], 2), round(p["end"], 2))))
-        self.boring_btn.setText("✂ Cut boring parts" + (f" ({n})" if n else ""))
-        self.timeline.update()
-        if any((p["clip"].path, round(p["start"], 2), round(p["end"], 2)) not in self.dead for p in self.pieces):
-            self._dead_timer.start()
-
-    def dead_for(self, pc: dict) -> list:
-        return self.dead.get((pc["clip"].path, round(pc["start"], 2), round(pc["end"], 2)), [])
-
-    def _cut_boring(self):
-        from ..analysis import cut_spans
-        if not self.pieces:
-            return
-        before = sum(p["end"] - p["start"] for p in self.pieces)
-        new = []
-        for p in self.pieces:
-            new += cut_spans(p, self.dead_for(p))
-        gone = before - sum(p["end"] - p["start"] for p in new)
-        if gone < 0.3:
-            self.status.setText("✂ No boring parts found (or still checking — they show up red on the timeline)")
-            return
-        self.pieces = new
-        self._autoplay_next = False
-        self._refresh_list(0)
-        self.status.setText(f"✂ Cut {gone:.1f} s of dead air. Ctrl+Z brings it back.")
-
-    beatsReady = Signal(object)
-
-    def _beat_sync(self, quiet: bool = False):
-        music = self.music.text().strip()
-        if not music or not Path(music).exists():
-            if not quiet:
-                QMessageBox.information(self, "Sync to beat", "Pick some background music first (Music on the right).")
-            return
-        self.status.setText("🎵 Finding the beat…")
-        if not getattr(self, "_beat_wired", False):
-            self._beat_wired = True
-            self.beatsReady.connect(self._beats_done)
-
-        def work():
-            from ..analysis import beats
-            try:
-                self.beatsReady.emit(list(beats(music)))
-            except Exception:
-                self.beatsReady.emit([])
-        threading.Thread(target=work, daemon=True).start()
-
-    def _beats_done(self, bts):
-        from .. import timeline_model as tm
-        from ..analysis import nearest
-        if len(bts) < 4:
-            self.status.setText("🎵 Couldn't find a steady beat in that music.")
-            return
-        moved = 0
-        # 1. every cut lands on a beat (clips get a little longer or shorter, never past their footage)
-        acc = 0.0
-        for i, pc in enumerate(self.pieces):
-            d = tm.piece_out_dur(pc)
-            end_out = acc + d
-            if i < len(self.pieces) - 1:
-                b = nearest(bts, end_out, 0.6)
-                if b is not None and abs(b - end_out) > 0.03:
-                    sp = max(0.1, pc.get("speed", 1.0))
-                    new_end = pc["end"] + (b - end_out) * sp
-                    new_end = max(pc["start"] + 0.8, min(pc["clip"].duration or new_end, new_end))
-                    if abs(new_end - pc["end"]) > 0.01:
-                        pc["end"] = round(new_end, 3)
-                        moved += 1
-            acc += tm.piece_out_dur(pc)
-        # 2. zooms and sound effects hit on the beat
-        lay = tm.layout(self.pieces)
-        for (a, _), pc in zip(lay, self.pieces):
-            for e in pc.get("effects", []):
-                if e.get("type") in ("zoom", "sfx"):
-                    o = a + tm.src_to_out(pc, e["t"])
-                    b = nearest(bts, o, 0.3)
-                    if b is not None:
-                        e["t"] = round(max(pc["start"], min(pc["end"] - 0.05, tm.out_to_src(pc, max(0.0, b - a)))), 3)
-                        moved += 1
-        self._autoplay_next = False
-        self._refresh_list(max(0, self._current))
-        self._show_fx()
-        self.status.setText(f"🎵 Synced {moved} cuts / effects to the beat ({60 / max(0.2, bts[1] - bts[0]):.0f} BPM)."
-                            " Ctrl+Z undoes it.")
-
+    # ----- thumbnail
     def set_thumb(self, out_t: float):
         self.thumb_t = round(out_t, 2)
         self.timeline.update()
@@ -1599,9 +1258,6 @@ class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, EffectsMix
         if self.s.studio_advanced != on:
             self.s.studio_advanced = on
             save_settings(self.s)
-
-    def caster_volume(self) -> float:
-        return self.caster_vol.value() / 100
 
     def hook_secs_eff(self) -> float:
         """How long the hook shows: the whole video with a seamless loop (so the seam is invisible)."""
@@ -1672,20 +1328,6 @@ class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, EffectsMix
         a = self.hook_start
         self.cam_edit.set_live(playing, src_t, out_t, (a, a + self.hook_secs_eff()),
                                speaking[0].get("text", "") if speaking else "")
-
-    def _say(self, line: dict, vol: float):
-        if not line.get("wav") or not Path(line["wav"]).exists():
-            return
-        if not hasattr(self, "_say_player"):
-            from .player import make_audio_player
-            self._say_player, self._say_out = make_audio_player(self)
-        self._say_out.setVolume(min(1.0, 0.9 * vol))
-        self._say_player.setSource(QUrl.fromLocalFile(line["wav"]))
-        self._say_player.play()
-
-    def _stop_say(self):
-        if hasattr(self, "_say_player"):
-            self._say_player.stop()
 
     def _player_pos(self, ms: int):
         from .. import timeline_model as tm
@@ -1776,41 +1418,6 @@ class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, EffectsMix
         elif what == "remove":
             self.pieces.pop(i)
             self._refresh_list(min(i, len(self.pieces) - 1))
-        self.timeline.update()
-
-    def _caster_reword(self, k: int):
-        if not (0 <= k < len(self.caster_lines)):
-            return
-        line = self.caster_lines[k]
-        text, ok = QInputDialog.getText(self, "Caster line", "What should the caster say?", text=line["text"])
-        if not ok or not text.strip() or text.strip() == line["text"]:
-            return
-        self.status.setText("🎙 Recording the new line…")
-
-        def work():
-            import tempfile
-            from .. import commentator
-            wav, dur = commentator.speak_line(text.strip(), Path(tempfile.gettempdir()) / "ClipForge" / "caster",
-                                              self.s.caster_voice)
-            self.lineReady.emit({"k": k, "text": text.strip(), "wav": wav, "dur": dur})
-        threading.Thread(target=work, daemon=True).start()
-
-    lineReady = Signal(object)
-
-    def _line_done(self, res):
-        k = res["k"]
-        if not res["wav"]:
-            self.status.setText("🎙 The voice engine couldn't say that line.")
-            return
-        if 0 <= k < len(self.caster_lines):
-            self.caster_lines[k].update(text=res["text"], wav=res["wav"], dur=res["dur"])
-            self.status.setText(f"🎙 New line: “{res['text']}”")
-            self.timeline.update()
-            self._mark()
-
-    def _drop_voice(self):
-        self.caster_lines = []
-        self.set_script(None)
         self.timeline.update()
 
     def clear(self):
