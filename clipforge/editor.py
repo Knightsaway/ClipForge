@@ -65,8 +65,8 @@ def expand_speed(pieces: list[Piece]) -> list[Piece]:
         others = [e for e in p.effects if e.get("type") not in ("slowmo", "gif")]
         gifs = [e for e in p.effects if e.get("type") == "gif"]
 
-        def fx_in(a, b, last=False):
-            return [x for x in others if a <= x["t"] < b or (last and x["t"] == b)] + _gifs_in(gifs, a, b)
+        def fx_in(a, b, last=False):  # only called within this iteration
+            return [x for x in others if a <= x["t"] < b or (last and x["t"] == b)] + _gifs_in(gifs, a, b)  # noqa: B023
         cur = p.start
         smooth_before = False
         for e in slows:

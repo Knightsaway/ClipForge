@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os as _os
 
-import random
 
 from .editor import Piece
 from .highlights import find_moments

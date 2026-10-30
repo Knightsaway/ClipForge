@@ -14,7 +14,6 @@ cross-correlating the audio (your voice chat is in everyone's recording).
 from __future__ import annotations
 
 import json
-import os
 import re
 import subprocess
 import threading

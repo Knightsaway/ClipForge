@@ -965,7 +965,7 @@ class MainWindow(QMainWindow):
                 base = i / max(1, n_jobs)
                 produce(pieces, "short", self._short_opts(game), self._out(game, "Short"), game, kind="today",
                         ai_on=s.ai_enabled, ai_model=s.ai_model, clips=used, tiktok=s.tiktok_versions,
-                        progress=lambda f, m, b=base: progress(b + f / n_jobs, f"Short {i+1}: {m}"))
+                        progress=lambda f, m, b=base, i=i: progress(b + f / n_jobs, f"Short {i+1}: {m}"))
                 made += 2 if s.tiktok_versions else 1
             lp, lt, lh = plan["long"]
             if lp:

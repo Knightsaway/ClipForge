@@ -15,14 +15,14 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDoubleS
                                QScrollArea, QSpinBox, QSplitter, QVBoxLayout, QWidget)
 
 from .. import editor, ff
-from ..autoshort import plan_short, suggest_hook
+from ..autoshort import suggest_hook
 from ..config import IS_WINDOWS, Settings, save_settings
-from ..editor import PRESETS, Piece, RenderOptions
+from ..editor import PRESETS, Piece
 from ..highlights import find_moments
 from ..library import Clip, Library
 from . import theme
 from .player import PlayerPanel
-from .widgets import ClipCard, HotkeyEdit, Toggle, day_label, fmt_dur
+from .widgets import ClipCard, HotkeyEdit, day_label, fmt_dur
 
 
 def show_in_folder(path: str):
@@ -784,7 +784,6 @@ class StudioPage(QWidget):
         big.clicked.connect(self.pick_clips)
         ev.addWidget(big)
         ev.addStretch(2)
-        from PySide6.QtWidgets import QStackedWidget
         self.list_stack = QStackedWidget()
         self.list_stack.addWidget(self.empty)
         self.list_stack.addWidget(self.list)

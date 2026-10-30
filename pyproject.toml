@@ -36,5 +36,9 @@ line-length = 120
 target-version = "py310"
 
 [tool.ruff.lint]
-# Keep CI green on an existing codebase: catch real bugs, not style churn.
-select = ["E9", "F63", "F7", "F82"]
+# Catch real bugs, not style churn: syntax errors, pyflakes (unused / undefined names) and bugbear.
+select = ["E9", "F", "B"]
+ignore = [
+  "B007",  # unused loop variable: style only
+  "B905",  # zip() without strict=: style only, and strict= would change behaviour
+]

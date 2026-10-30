@@ -6,14 +6,14 @@ import threading
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, QUrl, Signal
+from PySide6.QtCore import QObject, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox,
                                QHBoxLayout, QLabel, QLineEdit, QListWidget, QMessageBox, QPushButton, QSpinBox,
                                QVBoxLayout, QWidget)
 
 from .. import __version__, storage, updater
-from ..config import Settings, app_data_dir, save_settings
+from ..config import Settings, save_settings
 
 
 class _Bridge(QObject):
@@ -79,7 +79,6 @@ class MaintenanceBox(QWidget):
         self.update_url.setPlaceholderText("github:Knightsaway/ClipForge  (or …@main for bleeding edge)")
         self.update_url.setToolTip("Uses GitHub Releases by default. Append @main to follow the branch instead.")
         f.addRow("Check online", self.update_url)
-        from PySide6.QtWidgets import QCheckBox
         self.update_check = QCheckBox("Check for updates when ClipForge starts")
         self.update_check.setChecked(getattr(s, "update_check", True))
         self.update_check.setToolTip("Off = ClipForge only goes online for updates when you press Check now")

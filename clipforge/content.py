@@ -11,10 +11,9 @@ from __future__ import annotations
 
 import time
 from datetime import datetime, timedelta
-from pathlib import Path
 
 from .autoshort import plan_short
-from .editor import Piece, RenderOptions
+from .editor import Piece
 from .library import Clip
 
 
