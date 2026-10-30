@@ -5,7 +5,8 @@ import json
 import os
 import sys
 import tempfile
-from dataclasses import asdict, dataclass, field
+import time
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
 APP_NAME = "ClipForge"
@@ -16,6 +17,15 @@ def app_data_dir() -> Path:
     p = Path(base) / APP_NAME
     p.mkdir(parents=True, exist_ok=True)
     return p
+
+
+def log_note(text: str) -> None:
+    """One line in clipforge.log (shown in Diagnostics) for problems that are handled but worth knowing."""
+    try:
+        with open(app_data_dir() / "clipforge.log", "a", encoding="utf-8") as f:
+            f.write(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {text}\n")
+    except OSError:
+        pass
 
 
 def default_library_dir() -> Path:
@@ -168,20 +178,50 @@ class Settings:
 SETTINGS_FILE = app_data_dir() / "settings.json"
 
 
+def _keep_damaged(path: Path, why: str) -> None:
+    """Move an unreadable file aside so the next save can't overwrite what the user had."""
+    keep = path.with_name(f"{path.name}.damaged-{time.strftime('%Y%m%d-%H%M%S')}")
+    try:
+        os.replace(path, keep)
+        log_note(f"{path.name} could not be read ({why}); kept as {keep.name}, starting from defaults")
+    except OSError as e:
+        log_note(f"{path.name} could not be read ({why}) and could not be kept aside: {e}")
+
+
+def _fits(default, value) -> bool:
+    """Does a value from settings.json have the same kind as the default (any number for a number)?"""
+    if isinstance(default, bool) or isinstance(value, bool):
+        return isinstance(default, bool) and isinstance(value, bool)
+    if isinstance(default, (int, float)):
+        return isinstance(value, (int, float))
+    return isinstance(value, type(default))
+
+
 def load_settings() -> Settings:
     s = Settings()
-    try:
-        data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        data = None
+    data = None
+    if SETTINGS_FILE.exists():
+        try:
+            data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("not a JSON object")
+        except (OSError, UnicodeDecodeError, ValueError) as e:
+            if not isinstance(e, OSError):          # locked/unreadable: leave it alone, it may be fine
+                _keep_damaged(SETTINGS_FILE, str(e) or type(e).__name__)
+            data = None
     if data is None:
         from . import secrets_store
         secrets_store.apply_to_settings(s)
         return s
     hk = data.pop("hotkeys", None)
+    known = {f.name for f in fields(Settings)} - {"hotkeys"}
     for k, v in data.items():
-        if hasattr(s, k) and k != "QUALITY_TABLE":
+        if k not in known:
+            continue
+        if _fits(getattr(s, k), v):
             setattr(s, k, v)
+        else:
+            log_note(f"settings.json: ignored {k}={v!r} (expected {type(getattr(s, k)).__name__})")
     if s.short_layout == "facecam_pip":       # older versions: now the movable webcam box
         s.short_layout = "blur"
     if not s.caster_reset_030:                  # the caster isn't good enough yet: off for everyone, once
@@ -199,7 +239,7 @@ def load_settings() -> Settings:
         s.cam_layout.setdefault("mode", "stack")
     if isinstance(hk, dict):
         for k, v in hk.items():
-            if hasattr(s.hotkeys, k):
+            if hasattr(s.hotkeys, k) and isinstance(v, str):
                 setattr(s.hotkeys, k, v)
     from . import secrets_store
     secrets_store.apply_to_settings(s)
