@@ -58,7 +58,7 @@ Windows-first Python/PySide6 desktop app: replay buffer, editor, Auto Short. **E
 Version lives in:
 
 - `clipforge/__init__.py` → `__version__` (marked for release-please)
-- `pyproject.toml` → `[project].version` (bumped by release-please python strategy)
+- `pyproject.toml` → `[project].version` (marked for release-please via `extra-files`)
 - `.release-please-manifest.json` → last released version
 
 ## Conventional commits (required)
