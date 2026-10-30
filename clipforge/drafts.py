@@ -86,6 +86,38 @@ def cleanup(days: int = 30):
             delete(d["id"])
 
 
+# ------------------------------------------------------------------ the Studio's edit
+def pieces_to_json(pieces: list[dict]) -> list[dict]:
+    """Studio pieces ({"clip": Clip, …}) → what a draft stores (clip paths, copies of the effects)."""
+    import copy
+    return [{"path": p["clip"].path, "start": round(p["start"], 3), "end": round(p["end"], 3),
+             "speed": p.get("speed", 1.0), "effects": copy.deepcopy(p.get("effects", [])),
+             **({"alt": dict(p["alt"])} if p.get("alt") else {})} for p in pieces]
+
+
+def pieces_from_json(saved: list[dict], load_clip) -> list[dict]:
+    """A draft's pieces → Studio pieces; clips that were deleted or moved are left out."""
+    out = []
+    for p in saved:
+        if not Path(p["path"]).exists():
+            continue
+        out.append({"clip": load_clip(Path(p["path"])), "start": p["start"], "end": p["end"],
+                    "speed": p.get("speed", 1.0), "effects": [dict(e) for e in p.get("effects", [])],
+                    **({"alt": dict(p["alt"])} if p.get("alt") else {})})
+    return out
+
+
+def for_saving(existing: dict | None, origin: str) -> dict:
+    """The draft a Studio save goes into: the open one, or a new one when it's finished (done / skipped) or gone.
+    A failed draft becomes a plain draft again once you change it."""
+    if existing is None or existing.get("status") in ("done", "skipped"):
+        return {"id": new_id(), "origin": origin, "status": "draft"}
+    d = dict(existing)
+    if d.get("status") in (None, "", "failed"):
+        d["status"] = "draft"
+    return d
+
+
 # ------------------------------------------------------------------ rendering a draft
 def build(edit: dict, s):
     """Draft edit → (pieces, preset key, RenderOptions, game, hook, extras) for producer.produce()."""
@@ -225,12 +257,10 @@ class RenderQueue:
 def edit_from(pieces: list[dict], s, game: str, hook: str, style: dict | None = None, caster=None,
               ai_post=None) -> dict:
     """A Studio-style edit built without the Studio (session inbox): your settings + your style."""
-    import copy
     st = style or {}
     cam = st.get("cam") or dict(getattr(s, "cam_layout", {}) or {})
     return {
-        "pieces": [{"path": p["clip"].path, "start": round(p["start"], 3), "end": round(p["end"], 3),
-                    "speed": p.get("speed", 1.0), "effects": copy.deepcopy(p.get("effects", []))} for p in pieces],
+        "pieces": pieces_to_json(pieces),
         "hook": hook, "hook_start": 0.0, "hook_secs": 3.0, "hook_whole": False,
         "hook_pos": st.get("hook_pos"), "hook_scale": st.get("hook_scale", 1.0), "hook_user": False,
         "caster": caster or [], "script": None, "ai_post": ai_post, "thumb_t": None, "game": game,

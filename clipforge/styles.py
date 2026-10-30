@@ -39,3 +39,38 @@ def apply_to_opts(style: dict, opts, vertical: bool = True):
     if "loop" in style and vertical:
         opts.extra["loop"] = bool(style["loop"])
     return opts
+
+
+# ------------------------------------------------------------------ managing styles (Studio → Style menu)
+def label(s, name: str) -> str:
+    """How a style is listed: its name, plus whether it's the default and which games use it."""
+    tag = []
+    if name == s.default_style:
+        tag.append("default")
+    games = [g for g, n in s.style_by_game.items() if n == name]
+    if games:
+        tag.append(", ".join(games[:2]))
+    return name + (f"  ({'; '.join(tag)})" if tag else "")
+
+
+def save(s, name: str, look: dict) -> None:
+    """Save (or overwrite) a style; the first one you save becomes the default for automatic edits."""
+    s.styles[name] = look
+    if not s.default_style:
+        s.default_style = name
+
+
+def use_for_game(s, game: str, name: str) -> None:
+    """This game's automatic edits use this style ("" = back to the default)."""
+    if name:
+        s.style_by_game[game] = name
+    else:
+        s.style_by_game.pop(game, None)
+
+
+def delete(s, name: str) -> None:
+    """Remove a style, and stop using it as the default or for any game."""
+    s.styles.pop(name, None)
+    if s.default_style == name:
+        s.default_style = ""
+    s.style_by_game = {g: n for g, n in s.style_by_game.items() if n != name}

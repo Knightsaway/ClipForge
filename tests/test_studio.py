@@ -129,7 +129,7 @@ def test_opening_a_draft_starts_fresh_history(studio):
     studio.watermark.setText("x")
     studio._commit()
     studio.load_draft(_draft(studio))
-    assert not studio.undo_btn.isEnabled() or len(studio._history) == 0
+    assert len(studio.history) == 0 and not studio.history.can_undo
 
 
 def test_every_change_saves_the_draft(studio):
@@ -187,3 +187,17 @@ def test_style_bookkeeping(studio):
     assert "Facecam right  (default; Game)" in labels
     studio._style_delete("Facecam right")
     assert s.styles == {} and s.default_style == "" and s.style_by_game == {}
+
+
+def test_undo_restores_a_copy_of_friend_angles(studio):
+    alt = {"path": "friend.mp4", "offset": 1.5, "label": "me", "alt_label": "Sam"}
+    studio.load_draft(_draft(studio))
+    studio.pieces[0]["alt"] = dict(alt)
+    studio._commit()
+    studio.watermark.setText("x")
+    studio._commit()
+    studio.undo()
+    studio.pieces[0]["alt"]["offset"] = 9.0                 # nudging the angle after undo…
+    studio.redo()
+    studio.undo()
+    assert studio.pieces[0]["alt"]["offset"] == 1.5         # …doesn't rewrite the history

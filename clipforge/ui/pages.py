@@ -14,9 +14,10 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDoubleS
                                QListWidget, QListWidgetItem, QMenu, QMessageBox, QProgressBar, QPushButton,
                                QScrollArea, QSpinBox, QSplitter, QVBoxLayout, QWidget)
 
-from .. import editor, ff
+from .. import drafts, editor, ff, styles
 from ..autoshort import suggest_hook
 from ..config import IS_WINDOWS, Settings, save_settings
+from ..edit_history import EditHistory
 from ..editor import PRESETS, Piece
 from ..highlights import find_moments
 from ..library import Clip, Library
@@ -726,8 +727,7 @@ class StudioPage(QWidget):
         self.thumb_t: float | None = None        # thumbnail moment picked on the timeline
         self.dead: dict = {}                     # (path, start, end) -> dead-air spans, for the timeline
         self.music_scores: dict = {}             # (path, start, end) -> how much the game sound is music
-        self._history: list[tuple[str, dict]] = []   # undo / redo snapshots (json key, state)
-        self._hist_i = -1
+        self.history = EditHistory()               # undo / redo snapshots
         self._hist_timer = QTimer(self)
         self._hist_timer.setSingleShot(True)
         self._hist_timer.setInterval(350)          # a drag = one undo step, not hundreds
@@ -1671,9 +1671,7 @@ class StudioPage(QWidget):
         """Everything needed to rebuild / render this edit later (saved as a draft)."""
         import copy
         return {
-            "pieces": [{"path": p["clip"].path, "start": round(p["start"], 3), "end": round(p["end"], 3),
-                        "speed": p.get("speed", 1.0), "effects": copy.deepcopy(p.get("effects", [])),
-                        **({"alt": dict(p["alt"])} if p.get("alt") else {})} for p in self.pieces],
+            "pieces": drafts.pieces_to_json(self.pieces),
             "hook": self.hook.text(), "hook_start": self.hook_start, "hook_secs": self.hook_secs,
             "hook_secs_eff": self.hook_secs_eff(), "hook_whole": self.hook_whole,
             "hook_pos": copy.deepcopy(self.hook_pos), "hook_scale": self.hook_scale,
@@ -1681,34 +1679,19 @@ class StudioPage(QWidget):
             "items": copy.deepcopy(self.items),
             "script": copy.deepcopy(self.script), "ai_post": self.ai_post, "thumb_t": self.thumb_t,
             "game": self._game() or "Clips",
-            "opts": {"preset": self.preset.currentData(), "layout": self.layout_box.currentData(),
-                     "watermark": self.watermark.text().strip(), "music": self.music.text().strip(),
-                     "music_volume": self.music_vol.value() / 100, "loudnorm": self.loud.isChecked(),
-                     "captions": self.captions.isChecked(), "caption_style": self.cap_style.currentData(),
-                     "loop": self.loop.isChecked(), "tiktok": self.tiktok.isChecked(),
-                     "game_volume": self.game_vol.value() / 100, "mic_volume": self.mic_vol.value() / 100,
-                     "caster_duck": self.caster_duck.value() / 100, "caster_volume": self.caster_volume(),
-                     "cam": self.cam_edit.config()},
+            "opts": {**self._opts_values(), "cam": self.cam_edit.config()},
         }
 
     def save_draft(self, **fields) -> dict | None:
         if not self.pieces:
             return None
-        from .. import drafts
-        d = drafts.load(self.draft_id) if self.draft_id else None
-        if d is None or d.get("status") in ("done", "skipped"):
-            # a finished (or skipped) draft stays as it was; changing it starts a new draft
-            d = {"id": drafts.new_id(), "origin": self.draft_origin, "status": "draft"}
-        if d.get("status") == "failed":
-            d["status"] = "draft"
+        d = drafts.for_saving(drafts.load(self.draft_id) if self.draft_id else None, self.draft_origin)
         d["edit"] = self.edit_state()
         d["title"] = self.hook.text().strip() or f"{self._game() or 'Clips'} · {len(self.pieces)} clips"
         d["game"] = self._game()
         from .. import timeline_model as tm
         d["length"] = round(tm.total(self.pieces), 1)
         d["thumb"] = str(self.pieces[0]["clip"].thumb)
-        if d.get("status") in (None, "", "draft") and "status" not in fields:
-            d["status"] = "draft"
         d.update(fields)
         d = drafts.save(d)
         self.draft_id = d["id"]
@@ -1717,33 +1700,13 @@ class StudioPage(QWidget):
     def load_draft(self, d: dict) -> bool:
         """Open a saved draft in the Studio exactly as it was left."""
         edit = d.get("edit", {})
-        pieces = []
-        for p in edit.get("pieces", []):
-            if not Path(p["path"]).exists():
-                continue
-            c = self.lib.load(Path(p["path"]))
-            pieces.append({"clip": c, "start": p["start"], "end": p["end"], "speed": p.get("speed", 1.0),
-                           "effects": [dict(e) for e in p.get("effects", [])],
-                           **({"alt": dict(p["alt"])} if p.get("alt") else {})})
+        pieces = drafts.pieces_from_json(edit.get("pieces", []), self.lib.load)
         if not pieces:
             QMessageBox.information(self, "Draft", "The clips in this draft were deleted or moved.")
             return False
         self.clear()
         o = edit.get("opts", {})
-        self.preset.setCurrentIndex(max(0, self.preset.findData(o.get("preset", "short"))))
-        self.layout_box.setCurrentIndex(max(0, self.layout_box.findData(o.get("layout", "blur"))))
-        self.watermark.setText(o.get("watermark", ""))
-        self.music.setText(o.get("music", ""))
-        self.music_vol.setValue(round(o.get("music_volume", 0.18) * 100))
-        self.loud.setChecked(o.get("loudnorm", True))
-        self.captions.setChecked(o.get("captions", False))
-        self.cap_style.setCurrentIndex(max(0, self.cap_style.findData(o.get("caption_style", "pop3"))))
-        self.loop.setChecked(o.get("loop", True))
-        self.tiktok.setChecked(o.get("tiktok", True))
-        self.game_vol.setValue(round(o.get("game_volume", 1.0) * 100))
-        self.mic_vol.setValue(round(o.get("mic_volume", 1.0) * 100))
-        self.caster_duck.setValue(round(o.get("caster_duck", 0.7) * 100))
-        self.caster_vol.setValue(round(o.get("caster_volume", 1.0) * 100))
+        self._set_opts(o, defaults=True)
         if o.get("cam"):
             self.cam_edit.set_config(o["cam"])
         self.pieces = pieces
@@ -1767,7 +1730,7 @@ class StudioPage(QWidget):
             self.script_lbl.setVisible(True)
         self.draft_id = d["id"] if d.get("status") != "done" else ""
         self.draft_origin = d.get("origin", "studio")
-        self._history, self._hist_i = [], -1
+        self.history.reset()
         self._autoplay_next = False
         self._refresh_list(0)
         self.timeline.fit()
@@ -1785,39 +1748,24 @@ class StudioPage(QWidget):
                                 "never while you're in a game. Press Clear all to start the next edit.")
 
     # ----- "My style" presets
+    STYLE_OPTS = ("layout", "watermark", "music", "music_volume", "loop", "tiktok", "captions", "caption_style",
+                  "caster_duck", "caster_volume")      # the options on the right that a style remembers
+
     def current_style(self) -> dict:
-        return {"layout": self.layout_box.currentData(), "cam": self.cam_edit.config(),
+        o = self._opts_values()
+        return {**{k: o[k] for k in self.STYLE_OPTS}, "cam": self.cam_edit.config(),
                 "hook_pos": self.hook_pos, "hook_scale": self.hook_scale,
-                "watermark": self.watermark.text().strip(), "music": self.music.text().strip(),
-                "music_volume": self.music_vol.value() / 100, "loop": self.loop.isChecked(),
-                "tiktok": self.tiktok.isChecked(), "captions": self.captions.isChecked(),
-                "caption_style": self.cap_style.currentData(), "caster": bool(self.caster_lines) or self.s.caster_auto,
-                "caster_duck": self.caster_duck.value() / 100, "caster_volume": self.caster_volume(),
+                "caster": bool(self.caster_lines) or self.s.caster_auto,
                 "gifs": self.s.auto_gifs, "cut_boring": self.s.auto_cut_boring, "beat_sync": True}
 
     def apply_style(self, st: dict, name: str = ""):
-        if st.get("layout"):
-            self.layout_box.setCurrentIndex(max(0, self.layout_box.findData(st["layout"])))
         if st.get("cam"):
             self.cam_edit.set_config(st["cam"])
         if "hook_pos" in st:
             self.hook_pos = st.get("hook_pos")
         if st.get("hook_scale"):
             self.hook_scale = float(st["hook_scale"])
-        for key, w in (("watermark", self.watermark), ("music", self.music)):
-            if key in st:
-                w.setText(st[key] or "")
-        if "music_volume" in st:
-            self.music_vol.setValue(round(st["music_volume"] * 100))
-        for key, w in (("loop", self.loop), ("tiktok", self.tiktok), ("captions", self.captions)):
-            if key in st:
-                w.setChecked(bool(st[key]))
-        if st.get("caption_style"):
-            self.cap_style.setCurrentIndex(max(0, self.cap_style.findData(st["caption_style"])))
-        if "caster_duck" in st:
-            self.caster_duck.setValue(round(st["caster_duck"] * 100))
-        if "caster_volume" in st:
-            self.caster_vol.setValue(round(st["caster_volume"] * 100))
+        self._set_opts({k: st[k] for k in self.STYLE_OPTS if k in st})
         self._refresh_cam_edit(frames=False)
         self._style_refresh(name)
         self._mark()
@@ -1827,13 +1775,7 @@ class StudioPage(QWidget):
         self.style_box.clear()
         self.style_box.addItem("(none — normal settings)", "")
         for name in sorted(self.s.styles):
-            tag = []
-            if name == self.s.default_style:
-                tag.append("default")
-            games = [g for g, n in self.s.style_by_game.items() if n == name]
-            if games:
-                tag.append(", ".join(games[:2]))
-            self.style_box.addItem(name + (f"  ({'; '.join(tag)})" if tag else ""), name)
+            self.style_box.addItem(styles.label(self.s, name), name)
         self.style_box.setCurrentIndex(max(0, self.style_box.findData(select)))
         self.style_box.blockSignals(False)
 
@@ -1850,9 +1792,7 @@ class StudioPage(QWidget):
         if not ok or not name.strip():
             return
         name = name.strip()
-        self.s.styles[name] = self.current_style()
-        if not self.s.default_style:
-            self.s.default_style = name
+        styles.save(self.s, name, self.current_style())
         save_settings(self.s)
         self._style_refresh(name)
         self.status.setText(f"🎨 Saved style “{name}”" + (" — it's the default for automatic edits"
@@ -1880,10 +1820,7 @@ class StudioPage(QWidget):
         if default is not None:
             self.s.default_style = default
         if game is not None:
-            if name:
-                self.s.style_by_game[game] = name
-            else:
-                self.s.style_by_game.pop(game, None)
+            styles.use_for_game(self.s, game, name)
         save_settings(self.s)
         self._style_refresh(self.style_box.currentData() or "")
 
@@ -1893,10 +1830,7 @@ class StudioPage(QWidget):
         self.status.setText(f"🎨 Updated style “{name}”")
 
     def _style_delete(self, name):
-        self.s.styles.pop(name, None)
-        if self.s.default_style == name:
-            self.s.default_style = ""
-        self.s.style_by_game = {g: n for g, n in self.s.style_by_game.items() if n != name}
+        styles.delete(self.s, name)
         save_settings(self.s)
         self._style_refresh("")
 
@@ -2032,53 +1966,69 @@ class StudioPage(QWidget):
         self.status.setText(f"🖼 The thumbnail will be made from {fmt_dur(out_t)} into the video")
 
     # ----- undo / redo
+    @staticmethod
+    def _copy_pieces(pieces: list[dict]) -> list[dict]:
+        """Pieces that share nothing editable with the originals (the clip itself is shared)."""
+        import copy
+        return [dict(p, effects=copy.deepcopy(p.get("effects", [])),
+                     **({"alt": dict(p["alt"])} if p.get("alt") else {})) for p in pieces]
+
     def _state(self) -> dict:
         import copy
-        return {"pieces": [dict(p, effects=copy.deepcopy(p.get("effects", [])),
-                                **({"alt": dict(p["alt"])} if p.get("alt") else {})) for p in self.pieces],
+        return {"pieces": self._copy_pieces(self.pieces),
                 "hook": self.hook.text(), "hook_start": self.hook_start, "hook_secs": self.hook_secs,
                 "hook_whole": self.hook_whole, "hook_pos": copy.deepcopy(self.hook_pos),
                 "hook_scale": self.hook_scale, "hook_user": getattr(self, "hook_user", False),
                 "caster": copy.deepcopy(self.caster_lines), "items": copy.deepcopy(self.items),
                 "current": self._current,
-                "thumb_t": self.thumb_t, "opts": self._opts_state()}
+                "thumb_t": self.thumb_t,
+                "opts": self._opts_values(strip=False) if hasattr(self, "caster_vol") else {}}
 
-    def _opts_state(self) -> dict:
-        if not hasattr(self, "caster_vol"):
-            return {}
-        return {"preset": self.preset.currentData(), "layout": self.layout_box.currentData(),
-                "watermark": self.watermark.text(), "music": self.music.text(), "music_volume": self.music_vol.value(),
-                "game_volume": self.game_vol.value(), "mic_volume": self.mic_vol.value(),
-                "captions": self.captions.isChecked(), "caption_style": self.cap_style.currentData(),
-                "loud": self.loud.isChecked(), "loop": self.loop.isChecked(), "tiktok": self.tiktok.isChecked(),
-                "caster_duck": self.caster_duck.value(), "caster_volume": self.caster_vol.value()}
+    # The options on the right: (draft key, widget, kind, default). Drafts, undo steps and styles all use this
+    # one list; volumes are 0–100 on screen and 0.0–1.0 everywhere else.
+    OPTS = (("preset", "preset", "combo", "short"), ("layout", "layout_box", "combo", "blur"),
+            ("watermark", "watermark", "text", ""), ("music", "music", "text", ""),
+            ("music_volume", "music_vol", "pct", 0.18), ("loudnorm", "loud", "check", True),
+            ("captions", "captions", "check", False), ("caption_style", "cap_style", "combo", "pop3"),
+            ("loop", "loop", "check", True), ("tiktok", "tiktok", "check", True),
+            ("game_volume", "game_vol", "pct", 1.0), ("mic_volume", "mic_vol", "pct", 1.0),
+            ("caster_duck", "caster_duck", "pct", 0.7), ("caster_volume", "caster_vol", "pct", 1.0))
 
-    def _set_opts_state(self, o: dict):
-        if not o:
-            return
-        widgets = [self.preset, self.layout_box, self.watermark, self.music, self.music_vol, self.game_vol,
-                   self.mic_vol, self.captions, self.cap_style, self.loud, self.loop, self.tiktok, self.caster_duck,
-                   self.caster_vol]
-        for w in widgets:
-            w.blockSignals(True)
-        try:
-            self.preset.setCurrentIndex(max(0, self.preset.findData(o["preset"])))
-            self.layout_box.setCurrentIndex(max(0, self.layout_box.findData(o["layout"])))
-            self.cap_style.setCurrentIndex(max(0, self.cap_style.findData(o["caption_style"])))
-            self.watermark.setText(o["watermark"])
-            self.music.setText(o["music"])
-            for w, k in ((self.music_vol, "music_volume"), (self.game_vol, "game_volume"),
-                         (self.mic_vol, "mic_volume"), (self.caster_duck, "caster_duck"),
-                         (self.caster_vol, "caster_volume")):
-                w.setValue(o[k])
-            for w, k in ((self.captions, "captions"), (self.loud, "loud"), (self.loop, "loop"),
-                         (self.tiktok, "tiktok")):
-                w.setChecked(o[k])
-        except KeyError:
-            pass
-        finally:
-            for w in widgets:
-                w.blockSignals(False)
+    def _opts_values(self, strip: bool = True) -> dict:
+        out = {}
+        for key, attr, kind, _ in self.OPTS:
+            w = getattr(self, attr)
+            if kind == "combo":
+                out[key] = w.currentData()
+            elif kind == "text":
+                out[key] = w.text().strip() if strip else w.text()
+            elif kind == "pct":
+                out[key] = w.value() / 100
+            else:
+                out[key] = w.isChecked()
+        return out
+
+    def _set_opts(self, o: dict, defaults: bool = False, quiet: bool = False):
+        """Put options on screen. Missing ones keep their current value, or get their default (defaults=True).
+        quiet: no change signals (undo / redo restores without recording a new step)."""
+        for key, attr, kind, default in self.OPTS:
+            v = o.get(key)
+            if v is None or (kind == "combo" and not v):
+                if not defaults:
+                    continue
+                v = default
+            w = getattr(self, attr)
+            was = w.blockSignals(True) if quiet else None
+            if kind == "combo":
+                w.setCurrentIndex(max(0, w.findData(v)))
+            elif kind == "text":
+                w.setText(str(v))
+            elif kind == "pct":
+                w.setValue(round(float(v) * 100))
+            else:
+                w.setChecked(bool(v))
+            if quiet:
+                w.blockSignals(was)
 
     def _watch_opts(self):
         """Changing any option on the right is an undo step and is saved in the draft."""
@@ -2091,28 +2041,14 @@ class StudioPage(QWidget):
         for w in (self.captions, self.loud, self.loop, self.tiktok):
             w.toggled.connect(lambda *_: self._mark())
 
-    @staticmethod
-    def _key(state: dict) -> str:
-        import json
-        st = dict(state, current=None,
-                  pieces=[dict(p, clip=p["clip"].path) for p in state["pieces"]])
-        return json.dumps(st, sort_keys=True, default=str)
-
     def _mark(self):
         """Something changed: record an undo step once things settle."""
         if hasattr(self, "_hist_timer"):
             self._hist_timer.start()
 
     def _commit(self):
-        st = self._state()
-        key = self._key(st)
-        if 0 <= self._hist_i < len(self._history) and self._history[self._hist_i][0] == key:
+        if not self.history.record(self._state()):
             return
-        del self._history[self._hist_i + 1:]
-        self._history.append((key, st))
-        if len(self._history) > 150:
-            del self._history[0]
-        self._hist_i = len(self._history) - 1
         self._update_undo_buttons()
         try:
             self.save_draft()          # every change is saved: close the app and nothing is lost
@@ -2121,27 +2057,27 @@ class StudioPage(QWidget):
 
     def _update_undo_buttons(self):
         if hasattr(self, "undo_btn"):
-            self.undo_btn.setEnabled(self._hist_i > 0)
-            self.redo_btn.setEnabled(self._hist_i < len(self._history) - 1)
+            self.undo_btn.setEnabled(self.history.can_undo)
+            self.redo_btn.setEnabled(self.history.can_redo)
 
     def undo(self):
         self._hist_timer.stop()
         self._commit()                      # don't lose the very last change
-        if self._hist_i > 0:
-            self._hist_i -= 1
-            self._restore(self._history[self._hist_i][1])
+        st = self.history.undo()
+        if st is not None:
+            self._restore(st)
             self.status.setText("Undone (Ctrl+Y to redo)")
 
     def redo(self):
         self._hist_timer.stop()
-        if self._hist_i < len(self._history) - 1:
-            self._hist_i += 1
-            self._restore(self._history[self._hist_i][1])
+        st = self.history.redo()
+        if st is not None:
+            self._restore(st)
             self.status.setText("Redone")
 
     def _restore(self, st: dict):
         import copy
-        self.pieces = [dict(p, effects=copy.deepcopy(p.get("effects", []))) for p in st["pieces"]]
+        self.pieces = self._copy_pieces(st["pieces"])
         self.hook.blockSignals(True)
         self.hook.setText(st["hook"])
         self.hook.blockSignals(False)
@@ -2152,7 +2088,7 @@ class StudioPage(QWidget):
         self.items = copy.deepcopy(st.get("items", []))
         self.cam_edit.set_items(self.items)
         self.thumb_t = st.get("thumb_t")
-        self._set_opts_state(st.get("opts") or {})
+        self._set_opts(st.get("opts") or {}, quiet=True)
         self.script_lbl.setVisible(bool(self.script) or bool(self.caster_lines))
         if self.caster_lines and not self.script:
             self.script_lbl.setText(f"🎙 AI caster: {len(self.caster_lines)} lines (on the timeline)   ✕")
