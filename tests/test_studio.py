@@ -744,7 +744,7 @@ def test_load_plan_from_an_automatic_edit(studio):
     clips = [p["clip"] for p in studio.pieces]
     plan = [Piece(clips[1].path, 3.0, 5.0, speed=1.25, effects=[{"type": "zoom", "t": 4.0}]),
             Piece("/gone.mp4", 0.0, 1.0), Piece(clips[0].path, 2.0, 6.0)]
-    with mock.patch("clipforge.ui.pages.suggest_hook", return_value="WAIT FOR IT"):
+    with mock.patch("clipforge.ui.studio.cliplist.suggest_hook", return_value="WAIT FOR IT"):
         studio.load_plan(plan, clips, preset="youtube1080")
     assert [(p["clip"].path, p["start"], p["end"], p["speed"]) for p in studio.pieces] == [
         (clips[1].path, 3.0, 5.0, 1.25), (clips[0].path, 2.0, 6.0, 1.0)]
@@ -824,7 +824,7 @@ def test_final_look_preview_speaks_the_caster_and_dips_the_game(studio):
 
 
 def test_timeline_view_and_thumbnail(studio):
-    with mock.patch("clipforge.ui.pages.save_settings") as save:
+    with mock.patch("clipforge.ui.studio.playback.save_settings") as save:
         studio._advanced(False)
         assert studio.timeline.isHidden() and studio.s.studio_advanced is False
         studio._advanced(False)

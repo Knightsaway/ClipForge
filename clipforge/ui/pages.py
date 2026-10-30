@@ -18,13 +18,13 @@ from .. import editor, ff
 from ..autoshort import suggest_hook
 from ..config import IS_WINDOWS, Settings, save_settings
 from ..edit_history import EditHistory
-from ..editor import PRESETS, Piece
+from ..editor import PRESETS
 from ..highlights import find_moments
 from ..library import Clip, Library
 from . import theme
 from .player import PlayerPanel
-from .studio import (AIMixin, AutoEditMixin, DraftMixin, EffectsMixin, HistoryMixin, KeyboardMixin, OverlayMixin,
-                     RenderMixin, SquadMixin, StyleMixin)
+from .studio import (AIMixin, AutoEditMixin, ClipListMixin, DraftMixin, EffectsMixin, HistoryMixin, KeyboardMixin,
+                     OverlayMixin, PlaybackMixin, RenderMixin, SquadMixin, StyleMixin)
 from .widgets import ClipCard, HotkeyEdit, day_label, fmt_dur
 
 
@@ -707,7 +707,7 @@ class ClipPicker(QDialog):
 
 # ====================================================================== studio
 class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, EffectsMixin, OverlayMixin, RenderMixin,
-                 AIMixin, AutoEditMixin, SquadMixin, QWidget):
+                 AIMixin, AutoEditMixin, SquadMixin, ClipListMixin, PlaybackMixin, QWidget):
     rendered = Signal(object)
     anotherTake = Signal(dict)     # "Try another edit": the main window makes it in the background
     # Results of background work, delivered on the UI thread. They're used by the parts in ui/studio/ but declared
@@ -1197,23 +1197,6 @@ class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, EffectsMix
     def _game(self) -> str:
         return self.pieces[0]["clip"].game if self.pieces else ""
 
-    def add_clips(self, clips: list[Clip]):
-        for c in clips:
-            end = c.trim_out or c.duration
-            self.pieces.append({"clip": c, "start": c.trim_in, "end": end, "effects": [], "speed": 1.0})
-        self._refresh_list(len(self.pieces) - 1)
-
-    def load_plan(self, plan: list[Piece], clips: list[Clip], preset: str = "short", script: dict | None = None):
-        by_path = {c.path: c for c in clips}
-        self.pieces = [{"clip": by_path[p.path], "start": p.start, "end": p.end, "effects": list(p.effects),
-                        "speed": p.speed} for p in plan if p.path in by_path]
-        self.preset.setCurrentIndex(self.preset.findData(preset))
-        self.set_script(script)
-        if not self.hook.text() and not script:
-            self.hook.setText(suggest_hook(self._game(), self.hook_weights()))
-        self._refresh_list(0)
-        self.timeline.fit()
-
     def set_script(self, script: dict | None):
         """Script mode: a voiceover + timed lines ride along with the pieces."""
         self.script = script
@@ -1241,23 +1224,8 @@ class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, EffectsMix
     def _cur(self) -> dict | None:
         return self.pieces[self._current] if 0 <= self._current < len(self.pieces) else None
 
-    # drafts, styles, undo / redo, shortcuts, effects, text / blur / mutes, rendering, the AI caster and writer,
-    # automatic edits and friend's angle: see ui/studio/
-
-    # ----- thumbnail
-    def set_thumb(self, out_t: float):
-        self.thumb_t = round(out_t, 2)
-        self.timeline.update()
-        self._mark()
-        self.status.setText(f"🖼 The thumbnail will be made from {fmt_dur(out_t)} into the video")
-
-    # ----- timeline / advanced editing
-    def _advanced(self, on: bool):
-        self.timeline.setVisible(on)
-        self.tl_bar.setVisible(on)
-        if self.s.studio_advanced != on:
-            self.s.studio_advanced = on
-            save_settings(self.s)
+    # the clip list, playback and preview, drafts, styles, undo / redo, shortcuts, effects, text / blur / mutes,
+    # rendering, the AI caster and writer, automatic edits and friend's angle: see ui/studio/
 
     def hook_secs_eff(self) -> float:
         """How long the hook shows: the whole video with a seamless loop (so the seam is invisible)."""
@@ -1280,145 +1248,6 @@ class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, EffectsMix
         self.hook_pos = self.cam_edit.canvas.hook_pos
         self.hook_scale = self.cam_edit.canvas.hook_scale
         self._mark()
-
-    def _seek_out(self, out_t: float):
-        """Timeline click: show that moment in the preview."""
-        from .. import timeline_model as tm
-        if not self.pieces:
-            return
-        i, t = tm.locate(self.pieces, out_t)
-        if i < 0:
-            return
-        if i != self._current:
-            self._autoplay_next = False
-            self.list.setCurrentRow(i)
-        self.player.player.setPosition(int(t * 1000))
-        self.timeline.set_playhead(out_t)
-
-    def _media_status(self, st):
-        """A clip played right to the end of its file: in Play-whole-edit, carry on with the next one."""
-        if self._play_all and st == self.player.player.MediaStatus.EndOfMedia and \
-                not getattr(self, "_advancing", False):
-            self._advancing = True
-            QTimer.singleShot(400, lambda: setattr(self, "_advancing", False))
-            if self._current + 1 < len(self.pieces):
-                self.list.setCurrentRow(self._current + 1)
-                self.player.player.play()
-            else:
-                self._toggle_play_all(stop=True)
-
-    def _tab_changed(self, i: int):
-        self.player.live_frames = i == 1
-        if i == 1:
-            self._refresh_cam_edit()
-
-    def _live_tick(self, out_t: float, src_t: float, playing: bool):
-        """Final-look preview: text / GIFs at their moments, the caster's lines play and the game dips."""
-        prev = getattr(self, "_last_out", -1.0)
-        self._last_out = out_t
-        speaking = [c for c in self.caster_lines if c["t"] <= out_t <= c["t"] + c.get("dur", 1.5)]
-        vol = self.caster_volume()
-        if playing and vol > 0:
-            for c in self.caster_lines:
-                if prev < c["t"] <= out_t and out_t - prev < 0.6:
-                    self._say(c, vol)
-        if not playing:
-            self._stop_say()
-        self.player.duck(self.caster_duck.value() / 100 if (playing and speaking and vol > 0) else 1.0)
-        a = self.hook_start
-        self.cam_edit.set_live(playing, src_t, out_t, (a, a + self.hook_secs_eff()),
-                               speaking[0].get("text", "") if speaking else "")
-
-    def _player_pos(self, ms: int):
-        from .. import timeline_model as tm
-        pc = self._cur()
-        if not pc:
-            return
-        lay = tm.layout(self.pieces)
-        if self._current < len(lay):
-            out_t = lay[self._current][0] + tm.src_to_out(pc, ms / 1000)
-            self.timeline.set_playhead(out_t)
-            playing = self.player.player.playbackState() == self.player.player.PlaybackState.PlayingState
-            self._live_tick(out_t, ms / 1000, playing)
-        end = min(pc["end"], (pc["clip"].duration or pc["end"]))
-        if self._play_all and ms / 1000 >= end - 0.06 and not getattr(self, "_advancing", False):
-            self._advancing = True
-            QTimer.singleShot(400, lambda: setattr(self, "_advancing", False))
-            if self._current + 1 < len(self.pieces):
-                self.list.setCurrentRow(self._current + 1)
-                self.player.player.play()
-            else:
-                self._toggle_play_all(stop=True)
-
-    def _toggle_play_all(self, *_, stop: bool = False):
-        if not self.pieces:
-            return
-        self._play_all = not self._play_all and not stop
-        self.player.loop_range = not self._play_all
-        self.play_all_btn.setText("⏹  Stop" if self._play_all else "▶  Play whole edit")
-        if self._play_all:
-            self.mid_tabs.setCurrentIndex(1)       # watch it the way it will look
-            if self._current != 0:
-                self.list.setCurrentRow(0)
-            pc = self.pieces[0]
-            self.player.player.setPosition(int(pc["start"] * 1000))
-            self.player.player.play()
-        else:
-            self.player.player.pause()
-
-    def _timeline_changed(self):
-        self.cam_edit.set_items(self.items)
-        cur = max(0, self._current)
-        pc = self._cur()
-        pos = self.player.player.position()
-        was_playing = self.player.player.playbackState() == self.player.player.PlaybackState.PlayingState
-        self._autoplay_next = was_playing
-        self._refresh_list(cur)
-        if pc and pc["start"] * 1000 <= pos <= pc["end"] * 1000:
-            self.player.player.setPosition(pos)
-        if pc:   # the clip may have been trimmed on the timeline: update the preview's handles
-            self.player.timeline.t_in, self.player.timeline.t_out = pc["start"], pc["end"]
-            self.player.timeline.update()
-        self._show_fx()
-        self.timeline.update()
-
-    def _timeline_gif(self, i: int, gi: int):
-        if i != self._current:
-            self.list.setCurrentRow(i)
-        self.mid_tabs.setCurrentIndex(1)
-        self.cam_edit.select_gif(gi)
-
-    def _piece_action(self, what: str, i: int, t: float):
-        from .. import timeline_model as tm
-        if not (0 <= i < len(self.pieces)):
-            return
-        if what == "thumb":
-            from .. import timeline_model as tm
-            self.set_thumb(tm.layout(self.pieces)[i][0] + tm.src_to_out(self.pieces[i], t))
-            return
-        self._autoplay_next = False
-        if what == "split":
-            parts = tm.split_piece(self.pieces[i], t)
-            if not parts:
-                self.status.setText("Can't split that close to the edge of the clip.")
-                return
-            self.pieces[i:i + 1] = list(parts)
-            self._refresh_list(i + 1)
-        elif what == "duplicate":
-            pc = dict(self.pieces[i])
-            pc["effects"] = [dict(e) for e in pc.get("effects", [])]
-            self.pieces.insert(i + 1, pc)
-            self._refresh_list(i + 1)
-        elif what == "move":
-            to = int(t)
-            pc = self.pieces.pop(i)
-            self.pieces.insert(max(0, min(len(self.pieces), to)), pc)
-            self._refresh_list(self.pieces.index(pc))
-            self.status.setText(f"Moved clip {i + 1} to position {self.pieces.index(pc) + 1}")
-        elif what == "remove":
-            self.pieces.pop(i)
-            self._refresh_list(min(i, len(self.pieces) - 1))
-        self.timeline.update()
 
     def clear(self):
         self.pieces = []
@@ -1449,84 +1278,6 @@ class StudioPage(HistoryMixin, DraftMixin, StyleMixin, KeyboardMixin, EffectsMix
         dlg = ClipPicker(clips, self)
         if dlg.exec() and dlg.chosen:
             self.add_clips(dlg.chosen)
-
-    def _refresh_list(self, select=-1):
-        if hasattr(self, "list_stack"):
-            self.list_stack.setCurrentIndex(1 if self.pieces else 0)
-        self.list.blockSignals(True)
-        self.list.clear()
-        for i, pc in enumerate(self.pieces):
-            c = pc["clip"]
-            fx = pc.get("effects", [])
-            tags = "".join({"zoom": " Z", "slowmo": " S", "sfx": " ♪"}.get(e["type"], "") for e in fx)
-            spd = f"  {pc.get('speed', 1.0):g}×" if abs(pc.get("speed", 1.0) - 1) > 1e-3 else ""
-            if pc.get("alt"):
-                spd += f"  👥 +{pc['alt']['alt_label']}"
-            it = QListWidgetItem(f"{i+1}.  {c.game} · {c.display_title}\n      "
-                                 f"{fmt_dur(pc['start'])} → {fmt_dur(pc['end'])}   ({pc['end']-pc['start']:.1f} s)"
-                                 f"{spd}{'   FX:' + tags if tags else ''}")
-            if c.thumb.exists():
-                it.setIcon(QPixmap(str(c.thumb)))
-            self.list.addItem(it)
-        self.list.setIconSize(QPixmap(96, 54).size())
-        self.list.blockSignals(False)
-        from .. import timeline_model as tm
-        tot = tm.total(self.pieces)             # the real length: speed, slow-mo and its ramps, like the render
-        warn = "  ⚠ over 60 s — shorter Shorts usually do better" if tot > 60 and self._is_short() else ""
-        self.total.setText(f"Total {fmt_dur(tot)}  ·  {len(self.pieces)} pieces{warn}")
-        if 0 <= select < len(self.pieces):
-            self.list.setCurrentRow(select)
-        if hasattr(self, "timeline"):
-            self.timeline.update()
-        if hasattr(self, "_dead_timer") and self.pieces:
-            self._dead_timer.start()
-        self._mark()
-
-    def _select(self, row):
-        self._current = row
-        if 0 <= row < len(self.pieces):
-            pc = self.pieces[row]
-            c = pc["clip"]
-            autoplay = self._play_all or getattr(self, "_autoplay_next", True)
-            self._autoplay_next = True
-            self.player.load(c.path, c.duration, pc["start"], pc["end"], c.markers,
-                             events=[e["t"] for e in c.events], effects=pc.get("effects", []), autoplay=autoplay)
-            self.speed.blockSignals(True)
-            self.speed.setValue(pc.get("speed", 1.0))
-            self.speed.blockSignals(False)
-            self.cam_edit.set_gifs(pc.get("effects", []))
-            self._sync_transition_box()
-            if self.mid_tabs.currentIndex() == 1:
-                self._refresh_cam_edit()
-
-    def _range(self, a, b):
-        if 0 <= self._current < len(self.pieces):
-            self.pieces[self._current]["start"] = a
-            self.pieces[self._current]["end"] = b
-            self._refresh_list(self._current)
-
-    def _reordered(self, *_):
-        # QListWidget moved the rows: rebuild our list in the new order from the item text index
-        order = []
-        for i in range(self.list.count()):
-            num = int(self.list.item(i).text().split(".", 1)[0]) - 1
-            order.append(self.pieces[num])
-        self.pieces = order
-        QTimer.singleShot(0, lambda: self._refresh_list(self.list.currentRow()))
-
-    def _remove(self):
-        r = self.list.currentRow()
-        if 0 <= r < len(self.pieces):
-            self.pieces.pop(r)
-            self._refresh_list(min(r, len(self.pieces) - 1))
-
-    def _dup(self):
-        r = self.list.currentRow()
-        if 0 <= r < len(self.pieces):
-            pc = dict(self.pieces[r])
-            pc["effects"] = [dict(e) for e in pc.get("effects", [])]
-            self.pieces.insert(r + 1, pc)
-            self._refresh_list(r + 1)
 
     def _random_music(self):
         import random
